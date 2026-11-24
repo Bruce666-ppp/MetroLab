@@ -12,7 +12,7 @@ MetroLab 是一款运行在浏览器里的地铁规划与模拟经营游戏。�
 
 ## 在线游玩
 
-GitHub Pages 工作流负责发布游戏。首次部署成功后，可在工作流的部署环境中打开游戏地址。
+在浏览器中打开 MetroLab。 [开始游戏](https://bruce666-ppp.github.io/MetroLab/)
 
 ## 设计动机
 

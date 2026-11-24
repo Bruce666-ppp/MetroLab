@@ -12,7 +12,7 @@ MetroLab is a browser-based metro planning and operations game. Build stations i
 
 ## Live demo
 
-The GitHub Pages workflow publishes the project site. The workflow's deployment environment reports the playable URL when its first deployment succeeds.
+Play MetroLab in your browser. [Open the live game](https://bruce666-ppp.github.io/MetroLab/)
 
 ## Design motivation
 
