@@ -3,15 +3,19 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, CirclePlus, Flag, MapPin, MapPinPlus, Pencil,
   Play, Plus, Route, TrainFront, Trash2, X } from 'lucide-react'
-import { demolitionCost, HEADWAYS, maxNameLength } from '../engine/actions.ts'
+import { HEADWAYS, maxNameLength } from '../engine/actions.ts'
 import type { Action } from '../engine/actions.ts'
 import { districtDetails, gameMetrics, lineDetails, networkReach } from '../engine/analytics.ts'
 import { getCity } from '../engine/city.ts'
 import { canAfford, INTERCHANGE_PRICE, milestoneValue, milestones, TRAIN_PRICE, TRAIN_REFUND, upgradePrice } from '../engine/economy.ts'
-import { LINE_COLORS, nextStop, stationCapacity, stationPreview, stationRadius, trackCost, trainLoad, waitingAt } from '../engine/network.ts'
+import { LINE_COLORS, nextStop, stationCapacity, stationPreview, stationRadius, trainLoad, waitingAt } from '../engine/network.ts'
+import type { quoteInsertion, quoteLine } from '../engine/planning.ts'
+import { ENGINEERING, unitsPerMinuteToKmh, unitsToMeters } from '../engine/track.ts'
+import { trainPosition } from '../engine/trains.ts'
 import type { GameState, Line, Station, Train } from '../engine/types.ts'
 import { LineBadge } from './Chrome.tsx'
-import { lineLabel, money, number, percent, stationLabel, timeLabel, trainCode } from './format.ts'
+import { lineLabel, money, number, percent, stationLabel, stationNameAt, timeLabel, trainCode } from './format.ts'
+import { editControl } from './interaction.ts'
 import type { LineDraft } from './interaction.ts'
 
 export function BackButton({ onClick }: { onClick: () => void }) {
@@ -35,15 +39,15 @@ export function Rows({ entries }: { entries: [ReactNode, ReactNode][] }) {
     <div key={i}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
 }
 
-export function NetworkOverview({ game, metrics, guidance, build, create, pickLine, pickStation, start }: {
+export function NetworkOverview({ game, metrics, guidance, create, pickLine, pickStation, start }: {
   game: GameState; metrics: ReturnType<typeof gameMetrics>; guidance: boolean
-  build: () => void; create: () => void; pickLine: (id: string) => void; pickStation: (id: string) => void; start: () => void
+  create: () => void; pickLine: (id: string) => void; pickStation: (id: string) => void; start: () => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
   const step = game.stations.length < 2 ? 0 : !game.lines.length ? 1 : !metrics.fleet ? 2 : game.lifetime.arrived === 0 ? 3 : 4
   const guide = [
-    { key: 'station', action: build, icon: MapPinPlus },
+    { key: 'station', action: create, icon: MapPinPlus },
     { key: 'line', action: create, icon: Route },
     { key: 'fleet', action: () => pickLine(game.lines[0].id), icon: TrainFront },
     { key: 'run', action: start, icon: Play },
@@ -69,7 +73,7 @@ export function NetworkOverview({ game, metrics, guidance, build, create, pickLi
         <button type="button" className="text-button" onClick={create}><Plus size={16}/>{t('panel.newLine')}</button>
       </div>
       {game.lines.length ? game.lines.map((line) => <button type="button" className="entity-row" key={line.id} onClick={() => pickLine(line.id)}>
-        <LineBadge line={line}/><span><strong>{lineLabel(line, t)}</strong><small>
+        <LineBadge line={line}/><span><strong>{lineLabel(line, t, false, game)}</strong><small>
           {t('panel.lineSummary', { stops: line.stops.length, trains: game.trains.filter((train) => train.active && train.lineId === line.id).length })}
         </small></span><ChevronRight size={15}/>
       </button>) : <p className="section-empty">{t('panel.noLines')}</p>}
@@ -96,7 +100,7 @@ export function NetworkOverview({ game, metrics, guidance, build, create, pickLi
 
 export function StationPanel({ game, station, reach, playing, back, act, pickLine, move, remove }: {
   game: GameState; station: Station; reach: ReturnType<typeof networkReach>; playing: boolean; back: () => void
-  act: (action: Action) => boolean; pickLine: (id: string) => void; move: () => void; remove: (cost: number) => void
+  act: (action: Action) => boolean; pickLine: (id: string) => void; move: () => void; remove: () => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
@@ -130,13 +134,13 @@ export function StationPanel({ game, station, reach, playing, back, act, pickLin
       [t('station.jobs'), number(preview.jobs, locale)],
       [t('station.waiting'), number(waitingAt(game, station.id), locale)],
       [t('station.capacity'), number(stationCapacity(station), locale)],
-      [t('station.catchment'), t('map.meters', { value: number(stationRadius(station.level) * 10, locale) })],
+      [t('station.catchment'), t('map.meters', { value: number(unitsToMeters(stationRadius(station.level)), locale) })],
       [t('station.demand'), number(activity?.requested ?? 0, locale)],
     ]} />
     <Rows entries={[[t('station.boarded'), number(activity?.boarded ?? 0, locale)],
       [t('station.alighted'), number(activity?.alighted ?? 0, locale)]]}/>
     {lines.length > 0 && <div className="chip-list" aria-label={t('panel.lines')}>{lines.map((line) =>
-      <button type="button" key={line.id} onClick={() => pickLine(line.id)} title={lineLabel(line, t, !playing)}><LineBadge line={line}/></button>)}</div>}
+      <button type="button" key={line.id} onClick={() => pickLine(line.id)} title={lineLabel(line, t, !playing, game)}><LineBadge line={line}/></button>)}</div>}
     {playing && <div className="detail-actions">
       {shared && <><ActionButton kind="primary" disabled={!canAfford(game, INTERCHANGE_PRICE)}
         onClick={() => act({ type: 'interchange', id: station.id })}>
@@ -147,7 +151,7 @@ export function StationPanel({ game, station, reach, playing, back, act, pickLin
         <CirclePlus size={17}/>{t('station.upgrade')}<small>{money(upgradePrice(station), locale)}</small>
       </ActionButton>}
       <ActionButton onClick={move}><MapPinPlus size={16}/>{t('station.move')}</ActionButton>
-      <ActionButton kind="danger" onClick={() => remove(demolitionCost(game, station.id))}><Trash2 size={16}/>{t('station.demolish')}</ActionButton>
+      <ActionButton kind="danger" onClick={remove}><Trash2 size={16}/>{t('station.demolish')}</ActionButton>
     </div>}
   </div>
 }
@@ -158,17 +162,25 @@ export function LinePanel({ game, line, playing, back, station, edit, act, pickT
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
-  const { distance, trains, active } = lineDetails(getCity(game.cityId), game, line)
+  const { distance, trains, active, radius, limit, designSpeed, travel, cycle, interval, capacity, legacy } = lineDetails(game, line)
   return <div className="detail-panel">
     <BackButton onClick={back}/>
     <div className="detail-heading"><LineBadge line={line}/><div>
-      <p className="section-label">{t('line.title')}{line.circular ? ' · ' + t('line.loop') : ''}</p><h2>{lineLabel(line, t, !playing)}</h2>
+      <p className="section-label">{t('line.title')}{line.circular ? ' · ' + t('line.loop') : ''}</p><h2>{lineLabel(line, t, !playing, game)}</h2>
     </div></div>
     <div className="status-label"><span className={active ? 'active-dot' : 'paused-dot'}/>{t(active ? 'line.active' : 'line.planned')}</div>
     <DataGrid values={[
-      [t('line.distance'), t('common.metros', { value: number(distance * 0.01, locale) })],
+      [t('line.distance'), t('common.metros', { value: number(unitsToMeters(distance) / 1000, locale) })],
       [t('metric.activeFleet'), active + ' / ' + trains.length],
+      [t('engineering.radius'), radius === null ? t('engineering.straight') : t('map.meters', { value: number(radius, locale) })],
+      [t('engineering.design'), t('train.kmh', { value: number(designSpeed, locale) })],
+      [t('engineering.limit'), limit === undefined ? t('engineering.legacy') : t('train.kmh', { value: number(limit, locale) })],
+      [t('engineering.travel'), t('common.minutes', { value: number(travel, locale) })],
     ]} />
+    <Rows entries={[[t('engineering.cycle'), t('common.minutes', { value: number(cycle, locale) })],
+      [t('engineering.effectiveHeadway'), interval === undefined ? '—' : t('common.minutes', { value: number(interval, locale) })],
+      [t('engineering.capacity'), capacity === undefined ? '—' : number(Math.floor(capacity), locale)]]}/>
+    {legacy && <p className="inline-warning">{t('engineering.legacyWarning', { minimum: ENGINEERING.minimumRadius })}</p>}
     {playing && <ActionButton onClick={edit}><Pencil size={16}/>{t('line.edit')}</ActionButton>}
     <section className="detail-section">
       <div className="section-heading"><h3>{t('line.fleet')}</h3></div>
@@ -198,14 +210,14 @@ export function LinePanel({ game, line, playing, back, station, edit, act, pickT
   </div>
 }
 
-export function LineEditor({ game, draft, defaultName, change, cancel, commit }: {
-  game: GameState; draft: LineDraft; defaultName: string
+export function LineEditor({ game, draft, quote, defaultName, change, cancel, commit }: {
+  game: GameState; draft: LineDraft; quote: ReturnType<typeof quoteLine>; defaultName: string
   change: (next: LineDraft) => void; cancel: () => void; commit: () => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
   const old = game.lines.find((line) => line.id === draft.id)
-  const cost = trackCost(getCity(game.cityId), game.stations, draft.stops, draft.circular, old)
+  const extension = Boolean(old && draft.kind === 'draw')
   function move(index: number, offset: number) {
     const stops = [...draft.stops]
     const [id] = stops.splice(index, 1)
@@ -216,7 +228,8 @@ export function LineEditor({ game, draft, defaultName, change, cancel, commit }:
   return <div className="detail-panel line-editor">
     <BackButton onClick={cancel}/>
     <div className="detail-heading"><span className="detail-icon"><Route size={22}/></span><div>
-      <p className="section-label">{t('line.title')}</p><h2>{t(old ? 'line.edit' : 'line.new')}</h2>
+      <p className="section-label">{t('line.title')}</p><h2>{extension
+        ? t('engineering.extend', { line: lineLabel(old!, t, false, game) }) : t(old ? 'line.edit' : 'line.new')}</h2>
     </div></div>
     <label className="input-field">{t('line.lineName')}
       <input value={draft.name} maxLength={maxNameLength} placeholder={defaultName}
@@ -233,31 +246,65 @@ export function LineEditor({ game, draft, defaultName, change, cancel, commit }:
       </div>
     </div>
     <div className="section-heading editor-stops"><h3>{t('line.stopOrder')}</h3><span>{draft.stops.length}</span></div>
-    <p className="small-hint">{insertAt ? t('line.inserting', { station: stationLabel(game, insertAt, t) }) : t('line.stopHint')}</p>
+    <p className="small-hint">{insertAt ? t('line.inserting', { station: stationLabel(game, insertAt, t) }) :
+      t(draft.kind === 'edit' ? 'engineering.editControls' : 'line.stopHint')}</p>
     <ol className="draft-stops" style={{ '--line-color': draft.color } as React.CSSProperties}>
       {draft.stops.map((id, index) => {
-        const station = game.stations.find((stop) => stop.id === id)!
+        const station = game.stations.find((stop) => stop.id === id)
+        const point = draft.proposed[id]
         return <li key={id} className={draft.insertion === index ? 'insertion' : ''}>
-          <span className="draft-index">{index + 1}</span><span className="draft-name">{stationLabel(game, station, t)}</span>
-          <button type="button" aria-label={t('line.moveUp')} title={t('line.moveUp')} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp size={14}/></button>
-          <button type="button" aria-label={t('line.moveDown')} title={t('line.moveDown')} disabled={index === draft.stops.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14}/></button>
-          <button type="button" aria-label={t('line.insert')} title={t('line.insert')} aria-pressed={draft.insertion === index}
+          <span className="draft-index">{index + 1}</span><span className="draft-name">{station ? stationLabel(game, station, t) : point ? stationNameAt(game, point, t) : '—'}</span>
+          <button type="button" aria-label={t('line.moveUp')} title={t('line.moveUp')} disabled={extension || index === 0} onClick={() => move(index, -1)}><ArrowUp size={14}/></button>
+          <button type="button" aria-label={t('line.moveDown')} title={t('line.moveDown')} disabled={extension || index === draft.stops.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14}/></button>
+          <button type="button" aria-label={t('line.insert')} title={t('line.insert')} aria-pressed={draft.insertion === index} disabled={extension}
             onClick={() => change({ ...draft, insertion: draft.insertion === index ? undefined : index })}><Plus size={14}/></button>
-          <button type="button" aria-label={t('line.removeStop')} title={t('line.removeStop')}
-            onClick={() => change({ ...draft, stops: draft.stops.filter((stop) => stop !== id), insertion: undefined })}><X size={14}/></button>
+          <button type="button" aria-label={t('line.removeStop')} title={t('line.removeStop')} disabled={extension && index === 0}
+            onClick={() => change({ ...draft, stops: draft.stops.filter((stop) => stop !== id),
+              anchor: draft.anchor === id ? undefined : draft.anchor, insertion: undefined })}><X size={14}/></button>
         </li>
       })}
     </ol>
+    {draft.control && <ActionButton onClick={() => change(editControl(draft, draft.control!))}>
+      <Trash2 size={16}/>{t('engineering.removeControl')}
+    </ActionButton>}
     <label className="check-field">
       <input type="checkbox" checked={draft.circular} onChange={(event) => change({ ...draft, circular: event.target.checked })}/>
       <span>{t('line.loop')} <small>{t('line.loopHint')}</small></span>
     </label>
-    <div className="build-total"><span>{t('line.cost')}</span><strong>{money(cost, locale)}</strong></div>
-    {!canAfford(game, cost) && <p className="inline-warning">{t('error.funds')}</p>}
-    {old && (old.stops.join('|') !== draft.stops.join('|') || old.circular !== draft.circular) &&
+    <div className="build-total"><span>{t('line.cost')}</span><strong>{money(quote.cost, locale)}</strong></div>
+    {quote.interchanges.length > 0 && <p className="small-hint">{t('engineering.includesInterchanges', { value: quote.interchanges.length })}</p>}
+    {quote.error && quote.error !== 'needsStops' && <p className="inline-warning">{t('error.' + quote.error)}</p>}
+    {old && draft.kind === 'edit' && (old.stops.join('|') !== draft.stops.join('|') || old.circular !== draft.circular) &&
       <p className="small-hint">{t('line.topologyNotice')}</p>}
-    <ActionButton kind="primary" onClick={commit} disabled={draft.stops.length < (draft.circular ? 3 : 2) || !canAfford(game, cost)}>
+    <ActionButton kind="primary" onClick={commit} disabled={Boolean(quote.error || draft.stops.length < 2 || draft.pending.length || draft.control)}>
       <Route size={17}/>{t(old ? 'line.apply' : 'line.save')}
+    </ActionButton>
+  </div>
+}
+
+export function InsertionPanel({ game, available, chosen, quote, toggle, cancel, commit }: {
+  game: GameState; available: string[]; chosen: string[]; quote: ReturnType<typeof quoteInsertion>
+  toggle: (id: string) => void; cancel: () => void; commit: () => void
+}) {
+  const { t, i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage ?? 'en'
+  return <div className="detail-panel">
+    <BackButton onClick={cancel}/>
+    <div className="detail-heading"><span className="detail-icon"><MapPinPlus size={22}/></span>
+      <div><h2>{t('engineering.insertStation')}</h2></div>
+    </div>
+    <p className="small-hint">{t('engineering.chooseTracks')}</p>
+    {available.map((id) => {
+      const line = game.lines.find((entry) => entry.id === id)!
+      return <label className="check-field insertion-option" key={id}>
+        <input type="checkbox" checked={chosen.includes(id)} onChange={() => toggle(id)}/>
+        <LineBadge line={line}/><span>{lineLabel(line, t, false, game)}</span>
+      </label>
+    })}
+    <div className="build-total"><span>{t('line.cost')}</span><strong>{quote.cost === undefined ? '—' : money(quote.cost, locale)}</strong></div>
+    {quote.error && chosen.length > 0 && <p className="inline-warning">{t('error.' + quote.error)}</p>}
+    <ActionButton kind="primary" disabled={!chosen.length || !!quote.error} onClick={commit}>
+      <MapPinPlus size={17}/>{t('engineering.insertStation')}
     </ActionButton>
   </div>
 }
@@ -271,6 +318,7 @@ export function TrainPanel({ game, train, playing, act, back, sell, pickLine }: 
   const index = train.phase === 'travel' ? nextStop(line, train.at, train.direction) : train.at
   const station = game.stations.find((entry) => entry.id === line.stops[index])!
   const position = stationLabel(game, station, t)
+  const speed = train.active ? trainPosition(train, line, new Map(game.stations.map((stop) => [stop.id, stop])))?.velocity ?? 0 : 0
   return <div className="detail-panel">
     <BackButton onClick={back}/>
     <div className="detail-heading"><span className="detail-icon"><TrainFront size={22}/></span>
@@ -281,7 +329,8 @@ export function TrainPanel({ game, train, playing, act, back, sell, pickLine }: 
     </div>
     <DataGrid values={[
       [t('train.load'), trainLoad(train) + ' / ' + train.capacity],
-      [t('train.speed'), t('train.kmh', { value: number(train.speed * 0.6, locale) })],
+      [t('train.speed'), t('train.kmh', { value: number(unitsPerMinuteToKmh(speed), locale) })],
+      [t('engineering.vehicleSpeed'), t('train.kmh', { value: number(unitsPerMinuteToKmh(train.speed), locale) })],
       [t('train.cost'), t('train.perMinute', { cost: money(train.active ? train.operatingCost : 12, locale) })],
       [t('train.dwellTime'), train.active && train.phase === 'dwell' ? t('common.minutes', { value: number(train.duration, locale) }) : '—'],
       [t('line.title'), <button type="button" className="chip-button" onClick={pickLine}><LineBadge line={line}/></button>],
@@ -302,7 +351,7 @@ export function DistrictPanel({ game, reach, id, back }: {
   const locale = i18n.resolvedLanguage ?? 'en'
   const details = districtDetails(getCity(game.cityId), game, id)
   if (!details) return null
-  const { district, population, jobs, demand } = details
+  const { district, population, jobs, demand, activity } = details
   return <div className="detail-panel">
     <BackButton onClick={back}/>
     <div className="detail-heading"><span className="detail-icon"><MapPin size={22}/></span>
@@ -316,7 +365,14 @@ export function DistrictPanel({ game, reach, id, back }: {
       [t('districtPanel.demand'), number(demand, locale)],
       [t('districtPanel.coverage'), percent(reach.planned[id].fraction, locale)],
       [t('districtPanel.access'), percent(reach.active[id].fraction, locale)],
+      [t('districtPanel.buildings'), number(activity.buildings, locale)],
+      [t('districtPanel.students'), number(Math.round(activity.students), locale)],
     ]} />
+    <section className="detail-section">
+      <div className="section-heading"><h3>{t('districtPanel.buildingMix')}</h3></div>
+      <Rows entries={Object.entries(activity.use).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1])
+        .map(([use, count]) => [t('building.' + use), number(count, locale)])}/>
+    </section>
   </div>
 }
 

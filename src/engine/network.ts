@@ -1,10 +1,11 @@
 import { districtAt, jobsOf, populationOf } from './city.ts'
-import { measureTrack, stationPrice } from './economy.ts'
-import { distance, isWater, octilinear, pathLength, walkDistance } from './geometry.ts'
+import { stationPrice } from './economy.ts'
+import { distance, isWater, walkDistance } from './geometry.ts'
+import { ENGINEERING, kmhToUnitsPerMinute, trackLength } from './track.ts'
 import type { City, Direction, GameState, Line, Point, Station } from './types.ts'
 
 export const LINE_COLORS = ['#2864d4', '#07865e', '#e47825', '#a552b7', '#ce4450', '#00879d', '#a16e14', '#4053a6']
-export const TRAIN_SPEED = 88
+export const TRAIN_SPEED = kmhToUnitsPerMinute(ENGINEERING.designSpeedKmh)
 export const DWELL = 0.75
 export const MIN_STATION_GAP = 42
 export const stationRadius = (level: Station['level']) => 147 + 27 * (level - 1)
@@ -23,19 +24,8 @@ export function nextStop(line: Line, at: number, direction: Direction) {
   return line.circular ? (next + line.stops.length) % line.stops.length : next
 }
 
-export function trackCost(city: City, stations: Station[], stops: string[], circular: boolean, oldLine?: Line) {
-  const positions = new Map(stations.map((station) => [station.id, station.position]))
-  const existing = new Set(oldLine && pairsOf(oldLine.stops, oldLine.circular).map(([a, b]) => pairKey(a, b)))
-  return pairsOf(stops, circular).reduce((total, [a, b]) => {
-    if (existing.has(pairKey(a, b)) || !positions.has(a) || !positions.has(b)) return total
-    return total + measureTrack(city, positions.get(a)!, positions.get(b)!).price
-  }, 0)
-}
-
-export function lineLength(stations: Station[], line: Line) {
-  const positions = new Map(stations.map((station) => [station.id, station.position]))
-  return pairsOf(line.stops, line.circular).reduce((total, [a, b]) =>
-    total + pathLength(octilinear(positions.get(a)!, positions.get(b)!)), 0)
+export function lineLength(line: Line) {
+  return line.track.reduce((total, section) => total + trackLength(section.pieces), 0)
 }
 
 export function stationPreview(city: City, game: GameState, position: Point, ignore?: string) {

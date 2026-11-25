@@ -1,6 +1,8 @@
-import { clamp, octilinear, pathLength } from './geometry.ts'
-import { DWELL, nextStop, TRAIN_SPEED, trainLoad, waitingAt, stationCapacity } from './network.ts'
+import { sectionAt } from './alignment.ts'
+import { clamp } from './geometry.ts'
+import { DWELL, nextStop, trainLoad, waitingAt, stationCapacity } from './network.ts'
 import type { AccessLink } from './network.ts'
+import { trackProfile } from './track.ts'
 import type { Direction, GameState, Leg } from './types.ts'
 
 interface Edge extends Leg {
@@ -46,7 +48,8 @@ export function makeRoutingNetwork(game: GameState): RoutingNetwork {
         const next = nextStop(line, i, direction)
         if (next < 0 || next >= line.stops.length) continue
         const to = stationById.get(line.stops[next])!
-        const minutes = pathLength(octilinear(from.position, to.position)) / TRAIN_SPEED + DWELL
+        const section = sectionAt(line, i, direction)!
+        const minutes = fleet.reduce((total, train) => total + trackProfile(section, train.speed, direction).duration, 0) / fleet.length + DWELL
         segments.push({ lineId: line.id, board: from.id, alight: to.id, direction, minutes, wait: 0 })
       }
     }

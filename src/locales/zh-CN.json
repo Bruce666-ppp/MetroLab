@@ -77,7 +77,11 @@
     "high": "高",
     "sample": "示例运营",
     "daylight": "白天",
-    "night": "夜间"
+    "night": "夜间",
+    "cityView": "立体",
+    "planView": "平面",
+    "showCity": "显示 2.5D 城市",
+    "showPlan": "显示平面地图"
   },
   "layer": {
     "standard": "标准地图",
@@ -85,18 +89,19 @@
     "demand": "出行需求",
     "coverage": "站点覆盖",
     "congestion": "网络拥堵",
-    "accessibility": "轨道交通可达性"
+    "accessibility": "轨道交通可达性",
+    "engineering": "轨道工程"
   },
   "tool": {
     "heading": "工具",
     "select": "查看",
-    "station": "建站",
-    "line": "线路",
+    "station": "建设车站",
+    "line": "绘制线路",
     "move": "迁移站点",
     "moveHint": "选择站点的新位置。",
     "selectHint": "选择片区、站点、线路或行驶中的列车。",
-    "buildHint": "点击陆地建设站点。",
-    "lineHint": "点击或拖过站点以确定停站顺序。",
+    "buildHint": "点击陆地建站，或点击已有轨道插入车站。",
+    "lineHint": "点击地图规划车站并连接轨道。",
     "cannotUndo": "时钟暂停期间的建设操作可撤销。",
     "guideSite": "建议建设位置"
   },
@@ -132,7 +137,7 @@
     "totalTrains": "{{count}} 列列车",
     "lines": "线路",
     "stations": "站点",
-    "noLines": "建设两座站点后即可开始规划线路。",
+    "noLines": "选择绘制线路，再点击地图规划首站。",
     "noStations": "在住宅区与出行目的地附近建设站点。",
     "newLine": "新建线路",
     "goals": "城市里程碑",
@@ -149,11 +154,11 @@
   "guide": {
     "heading": "开通首条线路",
     "progress": "第 {{step}} 步，共 4 步",
-    "stationTitle": "建设两座站点",
-    "stationText": "在地图上标出的建议位置建站，连接西区住宅与中央商务区。",
-    "stationAction": "建设站点",
-    "lineTitle": "连接站点",
-    "lineText": "依次在地图上连接站点，确定列车停站顺序。",
+    "stationTitle": "绘制首条线路",
+    "stationText": "点击地图上的建议位置设站，将西区住宅和中央商务区连接起来。",
+    "stationAction": "绘制首条线路",
+    "lineTitle": "连接既有站点",
+    "lineText": "选择既有站点，或继续点击地图规划新站。方案通过曲线半径校验后即可确认建设。",
     "lineAction": "绘制线路",
     "fleetTitle": "为线路配车",
     "fleetText": "打开线路详情，购置第一列列车。",
@@ -191,7 +196,12 @@
     "removeTitle": "拆除这座站点？",
     "removeBody": "系统会尽可能接续剩余站点。少于两站的线路将撤销，其列车会被出售。",
     "reconnect": "接续剩余站点需花费 {{cost}}。",
-    "none": "未选中站点"
+    "none": "未选中站点",
+    "directional": "{{district}}{{direction}}",
+    "north": "北",
+    "south": "南",
+    "east": "东",
+    "west": "西"
   },
   "line": {
     "title": "线路",
@@ -205,7 +215,7 @@
     "colorOption": "颜色 {{value}}",
     "customColor": "自定义颜色",
     "stopOrder": "停站顺序",
-    "stopHint": "点击地图站点，或按住鼠标拖过多个站点。",
+    "stopHint": "点击地图规划新站，也可以直接连接现有站点。",
     "moveUp": "向上移动站点",
     "moveDown": "向下移动站点",
     "insert": "在此站之后插入",
@@ -225,7 +235,9 @@
     "removeTitle": "移除这条线路？",
     "removeBody": "该线路的列车将出售。现有站点可继续服务其他线路。",
     "remove": "移除线路",
-    "topologyNotice": "更改停站顺序或环线设置会重启列车运行，并取消受影响的行程。"
+    "topologyNotice": "调整停站顺序或改变环线模式，会重启受影响的列车。",
+    "loopName": "{{from}}环线",
+    "corridorName": "{{from}}—{{to}}线"
   },
   "train": {
     "title": "列车",
@@ -253,7 +265,10 @@
     "demand": "每 5 分钟出行人数",
     "coverage": "建成站点覆盖",
     "access": "在运轨道可达性",
-    "opening": "第 {{day}} 天启动开发"
+    "opening": "第 {{day}} 天启动开发",
+    "buildings": "已启用建筑",
+    "students": "学位容量",
+    "buildingMix": "建筑用途构成"
   },
   "zone": {
     "residential": "住宅区",
@@ -324,7 +339,7 @@
   },
   "help": {
     "title": "规划操作",
-    "intro": "在居住地和就业区附近建站，连接成线，购置列车并启动时钟。",
+    "intro": "绘线时直接点击地图设站。建成后购置列车并启动时钟。",
     "select": "查看地图对象",
     "station": "建设站点",
     "line": "创建或编辑线路",
@@ -336,7 +351,11 @@
     "transfer": "如何换乘",
     "transferInfo": "两条线路停靠同一站点后，可在该站建设换乘设施。轨道交叉处不会形成换乘。",
     "accessibility": "服务图层",
-    "accessibilityInfo": "使用出行需求和可达性图层，查找有出行需求但缺少在运轨道服务的片区。"
+    "accessibilityInfo": "使用出行需求和可达性图层，查找有出行需求但缺少在运轨道服务的片区。",
+    "engineering": "轨道规划",
+    "engineeringInfo": "按住 Shift 点击以设置轨道控制点。从终点站起笔时可以延长线路。用建设车站工具点击既有轨道，可插入新站。",
+    "finish": "完成并确认建设线路",
+    "control": "放置轨道控制点"
   },
   "error": {
     "funds": "可用预算不足。",
@@ -349,7 +368,11 @@
     "invalidColor": "请选择有效的线路颜色。",
     "maxLevel": "该升级已完成。",
     "needsInterchange": "至少两条线路停靠此站后才能建设换乘设施。",
-    "invalidHeadway": "请从列表选择发车间隔。"
+    "invalidHeadway": "请从列表选择发车间隔。",
+    "curve": "该线路存在无法建设的转弯。请增大转弯空间或调整轨道控制点。",
+    "controlPoint": "请将轨道控制点放在城市范围内。",
+    "noTrack": "请在轨道上选择位置。",
+    "differentTrack": "请选择在此处共用同一位置的线路。"
   },
   "notice": {
     "built": "站点已建成。",
@@ -358,6 +381,77 @@
     "bought": "列车已加入车队。",
     "undone": "已撤销编辑。",
     "milestone": "已达成里程碑 · {{name}}",
-    "enterGame": "开始游戏即可规划自己的轨道网络。"
+    "enterGame": "开始游戏即可规划自己的轨道网络。",
+    "inserted": "已在所选轨道上插入车站。"
+  },
+  "engineering": {
+    "planning": "轨道方案",
+    "mode": "绘制模式",
+    "create": "创建新线路",
+    "extend": "延长 {{line}}",
+    "finish": "完成建设",
+    "length": "轨道长度",
+    "radius": "最小曲线半径",
+    "design": "设计速度",
+    "limit": "预计限速",
+    "travel": "预计运行时间",
+    "cost": "新增建设费",
+    "straight": "直线",
+    "startAtStation": "点击地图规划首站，也可从现有车站起笔。",
+    "nextPoint": "点击设站 · Shift + 点击添加轨道控制点",
+    "finishControl": "请在最后一个控制点之后设置车站，完成这一轨道区段。",
+    "editControls": "按住 Shift 点击增加控制点。选择菱形控制点，即可移动或移除。",
+    "moveControl": "点击地图，设置所选控制点的新位置。",
+    "removeControl": "移除控制点",
+    "placeControl": "添加控制点",
+    "cancelControl": "取消控制点放置",
+    "controlPoint": "轨道控制点",
+    "smooth": "平滑控制点",
+    "smoothingUnavailable": "当前站点间转弯空间不足。请调整线路走向，或拉开各点之间的距离。",
+    "invalidRadius": "最小允许半径为 {{minimum}} 米。请增大转弯空间或移动控制点。",
+    "insertStation": "插入车站",
+    "chooseTracks": "选择需要在此站停靠的线路。",
+    "includesInterchanges": "含 {{value}} 座新换乘站",
+    "legacy": "既有轨道",
+    "legacyWarning": "既有线路可继续运行。重建区段时适用 {{minimum}} 米的半径要求。",
+    "vehicleSpeed": "车辆最高速度",
+    "cycle": "周转时间",
+    "effectiveHeadway": "预计班次间隔",
+    "capacity": "单向每小时运力",
+    "good": "≥ {{high}} 米或直线",
+    "caution": "{{mid}}–{{high}} 米",
+    "restricted": "{{min}}–{{mid}} 米",
+    "invalid": "< {{min}} 米或既有折角"
+  },
+  "building": {
+    "residential": "住宅",
+    "mixed": "混合用途",
+    "office": "办公",
+    "retail": "商业零售",
+    "industry": "工业",
+    "school": "学校",
+    "hospital": "医疗",
+    "sports": "体育场馆"
+  },
+  "landmark": {
+    "exchangeTower": "奥尔德交易中心",
+    "centralPlaza": "中央广场",
+    "civicLibrary": "市立图书馆",
+    "marlowUniversity": "马洛大学",
+    "alderSchool": "奥尔德学校",
+    "oldTownGate": "老城门",
+    "oldTownHall": "老城议事厅",
+    "marketArcade": "集市拱廊",
+    "willowGardens": "柳林花园",
+    "quayPromenade": "北岸步道",
+    "harborExchange": "琉璃港商务中心",
+    "dockWorks": "奥尔德船厂",
+    "southbankHospital": "南岸医院",
+    "eastbankStadium": "东岸体育场",
+    "cedarAvenue": "雪松大道",
+    "westendBoulevard": "西区大道",
+    "hillviewRoad": "观山路",
+    "quarrySquare": "采石广场",
+    "meadowCourt": "草甸庭院"
   }
 }

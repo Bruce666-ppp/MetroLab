@@ -3,7 +3,7 @@ export type Zone = 'residential' | 'office' | 'commercial' | 'industrial' | 'civ
 export type Mode = 'career' | 'sandbox'
 export type Direction = 1 | -1
 export type Speed = 0 | 1 | 2 | 4
-export type Layer = 'standard' | 'population' | 'demand' | 'coverage' | 'congestion' | 'accessibility'
+export type Layer = 'standard' | 'population' | 'demand' | 'coverage' | 'congestion' | 'accessibility' | 'engineering'
 export type StationLevel = 1 | 2 | 3
 
 export interface District {
@@ -49,6 +49,19 @@ export interface Line {
   circular: boolean
   headway: number
   releaseAt: number
+  track: TrackSection[]
+  automaticName?: boolean
+}
+
+export type TrackPiece = { kind: 'straight'; from: Point; to: Point }
+  | { kind: 'arc'; from: Point; to: Point; center: Point; radius: number; sweep: number }
+
+export interface TrackSection {
+  from: string
+  to: string
+  controls: Point[]
+  pieces: TrackPiece[]
+  legacy?: true
 }
 
 export interface Leg {
@@ -134,4 +147,8 @@ export interface LineDesign {
   color: string
   stops: string[]
   circular: boolean
+  controls?: Record<string, Point[]>
+  proposed?: Record<string, Point>
+  autoInterchanges?: boolean
+  automaticName?: boolean
 }

@@ -1,5 +1,6 @@
-import { distance, isWater, octilinear, pathLength } from './geometry.ts'
-import type { City, GameState, Point, Station, Totals } from './types.ts'
+import { isWater } from './geometry.ts'
+import { pieceLength, pointOnPiece } from './track.ts'
+import type { City, GameState, Point, Station, Totals, TrackPiece } from './types.ts'
 
 export const INITIAL_BUDGET = 20_000_000
 export const TRAIN_PRICE = 520_000
@@ -29,22 +30,17 @@ export function salvage(game: GameState, amount: number) {
   post(game, 'salvage', amount)
 }
 
-export function measureTrack(city: City, a: Point, b: Point) {
-  const points = octilinear(a, b)
+export function measurePieces(city: City, pieces: TrackPiece[]) {
+  let length = 0
   let waterLength = 0
-  for (let index = 1; index < points.length; index++) {
-    const from = points[index - 1]
-    const to = points[index]
-    const length = distance(from, to)
-    const samples = Math.max(1, Math.ceil(length / 9))
+  for (const piece of pieces) {
+    const extent = pieceLength(piece)
+    length += extent
+    const samples = Math.max(1, Math.ceil(extent / 9))
     for (let i = 0; i < samples; i++) {
-      const t = (i + 0.5) / samples
-      if (isWater(city, { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t })) {
-        waterLength += length / samples
-      }
+      if (isWater(city, pointOnPiece(piece, (i + 0.5) / samples))) waterLength += extent / samples
     }
   }
-  const length = pathLength(points)
   return { length, waterLength, price: Math.ceil((length * 4900 + waterLength * 9400) / 1000) * 1000 }
 }
 

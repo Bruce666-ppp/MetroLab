@@ -77,7 +77,11 @@
     "high": "High",
     "sample": "Sample service",
     "daylight": "Daylight",
-    "night": "Night"
+    "night": "Night",
+    "cityView": "2.5D",
+    "planView": "Plan",
+    "showCity": "Show 2.5D city",
+    "showPlan": "Show plan view"
   },
   "layer": {
     "standard": "Standard map",
@@ -85,18 +89,19 @@
     "demand": "Travel demand",
     "coverage": "Station coverage",
     "congestion": "Network congestion",
-    "accessibility": "Transit accessibility"
+    "accessibility": "Transit accessibility",
+    "engineering": "Track engineering"
   },
   "tool": {
     "heading": "Tools",
     "select": "Inspect",
-    "station": "Station",
-    "line": "Line",
+    "station": "Build station",
+    "line": "Draw line",
     "move": "Move station",
     "moveHint": "Choose the station’s new location.",
     "selectHint": "Select a district, station, line or moving train.",
-    "buildHint": "Click on land to build a station.",
-    "lineHint": "Click or drag across stations to set the order.",
+    "buildHint": "Build on land or click a track to insert a station.",
+    "lineHint": "Click the map to place stations and connect them.",
     "cannotUndo": "Undo is available for edits made while the clock is paused.",
     "guideSite": "Suggested station locations"
   },
@@ -132,7 +137,7 @@
     "totalTrains": "{{count}} trains",
     "lines": "Lines",
     "stations": "Stations",
-    "noLines": "Build two stations to start planning a line.",
+    "noLines": "Choose Draw line and click the map to place the first station.",
     "noStations": "Place stations near homes and destinations.",
     "newLine": "New line",
     "goals": "City milestones",
@@ -149,11 +154,11 @@
   "guide": {
     "heading": "First service",
     "progress": "Step {{step}} of 4",
-    "stationTitle": "Build two stations",
-    "stationText": "Start near the suggested sites to connect West End homes with Central jobs.",
-    "stationAction": "Place a station",
-    "lineTitle": "Connect your stations",
-    "lineText": "Draw a line through the stations. The stop order sets the service pattern.",
+    "stationTitle": "Start drawing a line",
+    "stationText": "Click the suggested locations to connect West End homes with jobs in Central.",
+    "stationAction": "Draw first line",
+    "lineTitle": "Connect existing stations",
+    "lineText": "Select existing stops or click the map to place more. Confirm the line when its geometry passes inspection.",
     "lineAction": "Draw a line",
     "fleetTitle": "Put a train on the line",
     "fleetText": "Open a line and buy its first train.",
@@ -191,7 +196,12 @@
     "removeTitle": "Demolish this station?",
     "removeBody": "Services reconnect where possible. Trains on lines with fewer than two stops are sold.",
     "reconnect": "Connecting the remaining stops costs {{cost}}.",
-    "none": "No station selected"
+    "none": "No station selected",
+    "directional": "{{district}} {{direction}}",
+    "north": "North",
+    "south": "South",
+    "east": "East",
+    "west": "West"
   },
   "line": {
     "title": "Line",
@@ -205,7 +215,7 @@
     "colorOption": "Color {{value}}",
     "customColor": "Custom color",
     "stopOrder": "Stop order",
-    "stopHint": "Select or drag across stations on the map.",
+    "stopHint": "Click for new stops or select existing stations on the map.",
     "moveUp": "Move stop up",
     "moveDown": "Move stop down",
     "insert": "Insert after this stop",
@@ -225,7 +235,9 @@
     "removeTitle": "Remove this line?",
     "removeBody": "Trains assigned to the line will be sold. Stations remain available for other services.",
     "remove": "Remove line",
-    "topologyNotice": "Changing the route restarts its trains and cancels affected journeys."
+    "topologyNotice": "Reordering stops or changing loop service restarts affected trains.",
+    "loopName": "{{from}} Loop",
+    "corridorName": "{{from}}–{{to}}"
   },
   "train": {
     "title": "Train",
@@ -253,7 +265,10 @@
     "demand": "Departures / 5 min",
     "coverage": "Station catchment",
     "access": "Active rail access",
-    "opening": "Development unlocks on day {{day}}"
+    "opening": "Development unlocks on day {{day}}",
+    "buildings": "Open buildings",
+    "students": "School places",
+    "buildingMix": "Buildings by use"
   },
   "zone": {
     "residential": "Residential",
@@ -324,7 +339,7 @@
   },
   "help": {
     "title": "Planning controls",
-    "intro": "Build near homes and jobs, join the stations with a line, then buy a train and run the clock.",
+    "intro": "Draw a line by clicking the map to place stops. Buy a train after construction and run the clock.",
     "select": "Inspect the map",
     "station": "Build a station",
     "line": "Create or edit a line",
@@ -336,7 +351,11 @@
     "transfer": "Transfers",
     "transferInfo": "Connect two lines at the same station and build an interchange to enable transfers. Track crossings do not connect lines.",
     "accessibility": "Service map layers",
-    "accessibilityInfo": "Use demand and accessibility to locate neighborhoods with trips beyond the reach of active rail."
+    "accessibilityInfo": "Use demand and accessibility to locate neighborhoods with trips beyond the reach of active rail.",
+    "engineering": "Track planning",
+    "engineeringInfo": "Shift-click adds a track control point. Starting at a terminal offers an extension. Use Build station on an existing alignment to insert a stop.",
+    "finish": "Finish and confirm the line",
+    "control": "Place a track control point"
   },
   "error": {
     "funds": "The available budget is too low.",
@@ -349,7 +368,11 @@
     "invalidColor": "Choose a valid line color.",
     "maxLevel": "This upgrade is already complete.",
     "needsInterchange": "Serve this station with two lines to build an interchange.",
-    "invalidHeadway": "Choose a dispatch interval from the list."
+    "invalidHeadway": "Choose a dispatch interval from the list.",
+    "curve": "This alignment has an infeasible turn. Increase the turning space or adjust the track control points.",
+    "controlPoint": "Place the track control point within the city limits.",
+    "noTrack": "Choose a point on the track.",
+    "differentTrack": "Choose lines that share this point on the alignment."
   },
   "notice": {
     "built": "Station built.",
@@ -358,6 +381,77 @@
     "bought": "Train added to the fleet.",
     "undone": "Edit undone.",
     "milestone": "Milestone reached · {{name}}",
-    "enterGame": "Start a game to build your own network."
+    "enterGame": "Start a game to build your own network.",
+    "inserted": "Station inserted on the selected tracks."
+  },
+  "engineering": {
+    "planning": "Track plan",
+    "mode": "Drawing mode",
+    "create": "Create new line",
+    "extend": "Extend {{line}}",
+    "finish": "Finish construction",
+    "length": "Track length",
+    "radius": "Minimum curve radius",
+    "design": "Design speed",
+    "limit": "Estimated speed limit",
+    "travel": "Estimated run time",
+    "cost": "Construction cost",
+    "straight": "Straight",
+    "startAtStation": "Click the map to place a first station or start from an existing one.",
+    "nextPoint": "Click for a station · Shift-click for a track control point",
+    "finishControl": "Place a station after the last control point to complete this track.",
+    "editControls": "Shift-click to add a control point. Select a diamond to move or remove it.",
+    "moveControl": "Click the new location for the selected control point.",
+    "removeControl": "Remove control point",
+    "placeControl": "Place control point",
+    "cancelControl": "Cancel control placement",
+    "controlPoint": "Track control point",
+    "smooth": "Smooth control points",
+    "smoothingUnavailable": "The selected stations leave too little turning room. Adjust the route or add space between its points.",
+    "invalidRadius": "The minimum is {{minimum}} m. Increase the turning space or move a control point.",
+    "insertStation": "Insert station",
+    "chooseTracks": "Choose which lines will stop at this platform.",
+    "includesInterchanges": "Includes {{value}} new interchanges",
+    "legacy": "Legacy track",
+    "legacyWarning": "This legacy alignment may continue running. Rebuilt track must meet the {{minimum}} m rule.",
+    "vehicleSpeed": "Vehicle maximum",
+    "cycle": "Service cycle",
+    "effectiveHeadway": "Estimated headway",
+    "capacity": "Seats per hour / direction",
+    "good": "≥ {{high}} m / straight",
+    "caution": "{{mid}}–{{high}} m",
+    "restricted": "{{min}}–{{mid}} m",
+    "invalid": "< {{min}} m / legacy bends"
+  },
+  "building": {
+    "residential": "Residential",
+    "mixed": "Mixed-use",
+    "office": "Office",
+    "retail": "Retail",
+    "industry": "Industrial",
+    "school": "School",
+    "hospital": "Health care",
+    "sports": "Sports"
+  },
+  "landmark": {
+    "exchangeTower": "Alder Exchange Tower",
+    "centralPlaza": "Central Plaza",
+    "civicLibrary": "City Library",
+    "marlowUniversity": "Marlow University",
+    "alderSchool": "Alder School",
+    "oldTownGate": "Old Town Gate",
+    "oldTownHall": "Old Town Hall",
+    "marketArcade": "Market Arcade",
+    "willowGardens": "Willow Gardens",
+    "quayPromenade": "Quay Promenade",
+    "harborExchange": "Harbor Exchange",
+    "dockWorks": "Alder Dock Works",
+    "southbankHospital": "Southbank Hospital",
+    "eastbankStadium": "Eastbank Stadium",
+    "cedarAvenue": "Cedar Avenue",
+    "westendBoulevard": "West End Boulevard",
+    "hillviewRoad": "Hillview Road",
+    "quarrySquare": "Quarry Square",
+    "meadowCourt": "Meadow Court"
   }
 }

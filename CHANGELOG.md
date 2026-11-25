@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-11-25
+
+- Added the V0.2 cityscape and rail engineering update with switchable 2.5D and plan views, mixed-use buildings, named landmarks and school trips.
+- Added direct map-based construction with planned stations, track control points, terminal extensions, automatic interchanges and a live engineering quote.
+- Added exact circular rail geometry, the 250 m minimum construction radius, curve speed limits and acceleration and braking profiles shared by trains and passenger routing.
+- Added station insertion on one or multiple matching alignments, preserving in-service train positions and passenger groups.
+- Added the track engineering layer and geographic naming. Migrated version-one and version-two saves with legacy alignments and active operations intact.
+
 ## 1.0.0 — 2026-11-24
 
 - Added Marlow's river city map, seven land uses, bridges, future development areas and a real operating example network.

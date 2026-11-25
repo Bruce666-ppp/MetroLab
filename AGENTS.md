@@ -8,10 +8,16 @@ MetroLab is an original urban rail planning game. Preserve its complete construc
 - Make network edits through `applyAction`. It validates geography, topology and budget and returns an atomic result. Use `advanceGame` for deterministic clock changes.
 - Keep simulated trip generation, route choices, queues, train movement, arrivals and fare accounting causally linked. Add explicit simulation inputs when new metrics need them.
 - Keep geographic crossings distinct from stations shared by lines. Require an interchange for passenger transfers.
-- Add save migrations when stored values change. Keep active operations, queues and player-defined names intact.
+- Store each line's ordered station-to-station sections as persistent straight and circular pieces. Use those pieces for the SVG, track length, terrain cost, snapping, speed profiles and passenger routing. Keep all engineering in planimetric coordinates at 10 meters per world unit. The city renderer displaces roofs and facades above this plane.
+- Keep the minimum new curve radius and the game speed and acceleration parameters in ENGINEERING in track.ts. Validate new and rebuilt sections, including connections to existing tangents. Preserve confirmed sections when extending a line. Render legacy corners with an engineering warning.
+- Add save migrations when stored values change. Keep active operations, queues and player-defined names intact. Schema 3 imports schema 1 and 2 using the original octilinear alignment and legacy running profile.
 - Use English for source identifiers, comments, filenames and commit messages.
 
 ## Map and interface
+
+- Draw line starts a provisional plan from land or an existing station. Each click places a stop and Shift-click places a track control point. Offer extensions from eligible terminals and preserve the draft, camera and custom names across locale changes. Charge for construction only after the player confirms the plan.
+- Build station places a standalone stop on land and snaps to an alignment on track. Split occupied sections without moving active trains or dropping their passengers. Ask the player which lines to stop on when more than one alignment matches.
+- Build the city from deterministic street-constrained lots. Use each building's use, floor area and stage of development to aggregate population, employment, visitor capacity and school trips. Keep the rail overlay above the extruded city.
 
 Keep the map central. Use muted district and infrastructure colors, clear rail overlays and behavior tied to existing map tools. Preserve keyboard and pointer access and verify narrow-screen layouts. Add every user-visible string to both `src/locales/en.json` and `src/locales/zh-CN.json`. Use localized number and date formatting where appropriate. Use original game assets and retain dependency license notices.
 

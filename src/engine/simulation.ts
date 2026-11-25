@@ -6,7 +6,7 @@ import { DEMAND_INTERVAL, generateDemand, processPassengers } from './passengers
 import { operateTrains } from './trains.ts'
 import type { GameState, Mode } from './types.ts'
 
-export const SAVE_VERSION = 2
+export const SAVE_VERSION = 3
 export const TICK = 0.25
 
 export function newGame(mode: Mode, cityId = 'marlow'): GameState {
@@ -32,19 +32,18 @@ export function advanceGame(previous: GameState, minutes: number): GameState {
     districtDemand: { ...previous.districtDemand }, today: { ...previous.today }, lifetime: { ...previous.lifetime },
     milestones: previous.milestones.slice(),
   }
-  const stations = new Map(game.stations.map((station) => [station.id, station]))
   let access: Record<string, DistrictAccess> | undefined
   let trackLength: number | undefined
   for (let i = 0; i < steps; i++) {
     game.minute += TICK
     processPassengers(game)
-    operateTrains(game, TICK, stations)
+    operateTrains(game, TICK)
     if (game.minute % 1 !== 0) continue
     if (!access) {
       const served = servedStationIds(game)
       access = getDistrictAccess(city, game.stations.filter((station) => served.has(station.id)))
     }
-    trackLength ??= game.lines.reduce((length, line) => length + lineLength(game.stations, line), 0)
+    trackLength ??= game.lines.reduce((length, line) => length + lineLength(line), 0)
     const { coverage } = cityCoverage(city, game, access)
     applyOperatingMinute(game, coverage, trackLength)
     grantMilestones(game, coverage)

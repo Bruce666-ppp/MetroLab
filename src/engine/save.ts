@@ -1,13 +1,17 @@
 import { citiesList } from './city.ts'
+import { legacyTrack } from './alignment.ts'
 import { blankTotals } from './economy.ts'
+import { distance } from './geometry.ts'
+import { pairsOf } from './network.ts'
 import { SAVE_VERSION } from './simulation.ts'
-import type { GameState, Layer } from './types.ts'
+import { pieceLength, pointOnPiece } from './track.ts'
+import type { GameState, Layer, Point } from './types.ts'
 
 export const SAVE_KEY = 'metrolab.save'
 export const SETTINGS_KEY = 'metrolab.settings'
-export const layers: Layer[] = ['standard', 'population', 'demand', 'coverage', 'congestion', 'accessibility']
+export const layers: Layer[] = ['standard', 'population', 'demand', 'coverage', 'congestion', 'accessibility', 'engineering']
 export type Locale = 'en' | 'zh-CN'
-export interface Settings { language: Locale; layer: Layer; guides: boolean }
+export interface Settings { language: Locale; layer: Layer; guides: boolean; view?: 'city' | 'plan' }
 export interface SaveSlot { savedAt: string; game: GameState }
 
 type StorageIO = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -25,6 +29,7 @@ export function getSettings(storage: StorageIO, browserLanguage?: string): Setti
       language: value.language === 'en' || value.language === 'zh-CN' ? value.language : defaults.language,
       layer: layers.includes(value.layer) ? value.layer : defaults.layer,
       guides: typeof value.guides === 'boolean' ? value.guides : defaults.guides,
+      ...(value.view === 'city' || value.view === 'plan' ? { view: value.view } : {}),
     }
   } catch {
     return defaults
@@ -49,7 +54,9 @@ export function saveGame(storage: StorageIO, game: GameState, at = new Date()) {
   return write(storage, SAVE_KEY, slot) ? slot : undefined
 }
 
-function validGame(game: GameState) {
+const validPoint = (point: Point) => Number.isFinite(point?.x) && Number.isFinite(point?.y)
+
+function validGame(game: GameState, requireTrack: boolean) {
   if (!citiesList.some((city) => city.id === game.cityId) || !['career', 'sandbox'].includes(game.mode) ||
       !Number.isFinite(game.funds) || !Number.isFinite(game.minute) || game.minute < 0 ||
       !Number.isInteger(game.nextId) || game.nextId < 1 ||
@@ -57,7 +64,7 @@ function validGame(game: GameState) {
       !Array.isArray(game.egress) || !Array.isArray(game.history) || !Array.isArray(game.milestones) ||
       !game.today || !game.lifetime || !game.queues || !game.growth || !game.carry || !game.districtDemand ||
       !Number.isFinite(game.hourArrivals) || !Number.isFinite(game.hourBalance)) return false
-  const stationIds = new Set(game.stations.map((station) => station.id))
+  const stationIds = new Map(game.stations.map((station) => [station.id, station]))
   const knownLines = new Map(game.lines.map((line) => [line.id, line]))
   return stationIds.size === game.stations.length && knownLines.size === game.lines.length &&
     game.stations.every((station) => Number.isFinite(station.position?.x) && Number.isFinite(station.position?.y) &&
@@ -66,6 +73,27 @@ function validGame(game: GameState) {
       new Set(line.stops).size === line.stops.length && line.stops.every((id) => stationIds.has(id)) &&
       typeof line.name === 'string' && /^#[a-f\d]{6}$/i.test(line.color) && Number.isFinite(line.releaseAt) &&
       Number.isFinite(line.headway) && line.headway > 0) &&
+    (!requireTrack || game.lines.every((line) => {
+      const pairs = pairsOf(line.stops, line.circular)
+      return Array.isArray(line.track) && line.track.length === pairs.length && line.track.every((section, index) => {
+        const [from, to] = pairs[index]
+        return section.from === from && section.to === to && Array.isArray(section.controls) &&
+          section.controls.every(validPoint) && Array.isArray(section.pieces) && section.pieces.length > 0 &&
+          section.pieces.every((piece, i) => {
+            if (!validPoint(piece?.from) || !validPoint(piece?.to) ||
+                i > 0 && distance(piece.from, section.pieces[i - 1].to) > 0.012) return false
+            if (piece.kind === 'straight') return pieceLength(piece) > 0
+            if (piece.kind !== 'arc' || !validPoint(piece.center) || !Number.isFinite(piece.radius) ||
+                !Number.isFinite(piece.sweep) || piece.radius <= 0 || Math.abs(piece.sweep) > Math.PI * 2 ||
+                piece.sweep === 0) return false
+            const expected = pointOnPiece(piece, 0.5)
+            const endAngle = Math.atan2(expected.y - piece.center.y, expected.x - piece.center.x) + piece.sweep / 2
+            const end = { x: piece.center.x + piece.radius * Math.cos(endAngle), y: piece.center.y + piece.radius * Math.sin(endAngle) }
+            return Math.abs(distance(piece.from, piece.center) - piece.radius) < 1e-5 && distance(end, piece.to) < 1e-5
+          }) && distance(section.pieces[0].from, stationIds.get(from)!.position) <= 0.012 &&
+          distance(section.pieces.at(-1)!.to, stationIds.get(to)!.position) <= 0.012
+      })
+    })) &&
     game.trains.every((train) => knownLines.has(train.lineId) && Number.isInteger(train.at) && train.at >= 0 &&
       train.at < knownLines.get(train.lineId)!.stops.length && train.capacity > 0 && train.speed > 0 &&
       Array.isArray(train.loads) && Number.isFinite(train.duration) && Number.isFinite(train.remaining))
@@ -79,12 +107,17 @@ export function loadGame(storage: StorageIO): SaveSlot | undefined {
     if (!slot?.game || !Number.isFinite(Date.parse(slot.savedAt))) return undefined
     if (slot.game.version === 1) {
       slot.game = {
-        ...slot.game, version: SAVE_VERSION, districtDemand: slot.game.districtDemand ?? {},
+        ...slot.game, version: 2, districtDemand: slot.game.districtDemand ?? {},
         hourBalance: slot.game.hourBalance ?? 0, hourArrivals: slot.game.hourArrivals ?? 0,
         today: { ...blankTotals(), ...slot.game.today }, lifetime: { ...blankTotals(), ...slot.game.lifetime },
       }
     }
-    if (slot.game.version !== SAVE_VERSION || !validGame(slot.game)) return undefined
+    if (slot.game.version === 2 && validGame(slot.game, false)) {
+      const game = slot.game as GameState
+      game.lines = game.lines.map((line) => ({ ...line, track: legacyTrack(game.stations, line) }))
+      game.version = SAVE_VERSION
+    }
+    if (slot.game.version !== SAVE_VERSION || !validGame(slot.game, true)) return undefined
     slot.game.stationActivity ??= {}
     return slot as SaveSlot
   } catch {

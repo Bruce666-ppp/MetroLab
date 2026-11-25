@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
-import { dayNumber, minuteOfDay } from '../engine/city.ts'
-import type { GameState, Line, Station } from '../engine/types.ts'
+import { dayNumber, districtAt, getCity, minuteOfDay } from '../engine/city.ts'
+import { placeName } from '../engine/cityscape.ts'
+import type { GameState, Line, Point, Station } from '../engine/types.ts'
 
 const formatters = new Map<string, Intl.NumberFormat>()
 function numberFormat(locale: string, kind: 'number' | 'percent' | 'money' | 'compact') {
@@ -27,16 +28,50 @@ export function percent(n: number | undefined, locale: string) {
 export function money(n: number, locale: string, compact = true) {
   return numberFormat(locale, compact ? 'compact' : 'money').format(n)
 }
+function stationPlace(game: GameState, position: Point) {
+  const city = getCity(game.cityId)
+  const area = districtAt(city, position).area
+  return placeName(city, position, area, game.growth)
+}
+
+const nameCache = new WeakMap<Station[], { growth: GameState['growth']; places: Map<string, ReturnType<typeof stationPlace>> }>()
+
+export function stationNameAt(game: GameState, position: Point, t: TFunction) {
+  return t(stationPlace(game, position).key)
+}
+
 export function stationLabel(game: GameState, station: Station, t: TFunction) {
   if (station.name) return station.name
-  const sameDistrict = game.stations.filter((entry) => entry.district === station.district)
-  const district = t('district.' + station.district)
-  const index = sameDistrict.findIndex((entry) => entry.id === station.id)
-  return index > 0 ? t('station.numbered', { district, number: index + 1 }) : district
+  let cached = nameCache.get(game.stations)
+  if (cached?.growth !== game.growth) {
+    cached = { growth: game.growth, places: new Map(game.stations.map((entry) => [entry.id, stationPlace(game, entry.position)])) }
+    nameCache.set(game.stations, cached)
+  }
+  const place = cached.places.get(station.id) ?? stationPlace(game, station.position)
+  const base = t(place.key)
+  const duplicates = game.stations.filter((entry) => !entry.name && cached.places.get(entry.id)?.key === place.key)
+  if (duplicates[0]?.id === station.id || duplicates.length === 0) return base
+  const direction = (entry: Station) => {
+    const x = entry.position.x - place.center.x
+    const y = entry.position.y - place.center.y
+    return Math.abs(x) > Math.abs(y) ? x >= 0 ? 'east' : 'west' : y >= 0 ? 'south' : 'north'
+  }
+  const name = t('station.directional', { district: base, direction: t('station.' + direction(station)) })
+  const rank = duplicates.slice(1).filter((entry) => direction(entry) === direction(station)).findIndex((entry) => entry.id === station.id)
+  return rank > 0 ? t('station.numbered', { district: name, number: rank + 1 }) : name
 }
 export const lineCode = (line: Pick<Line, 'number'>) => 'M' + line.number
-export function lineLabel(line: Line, t: TFunction, example = false) {
-  return line.name || (example ? t('sample.line' + line.number) : t('line.defaultName', { number: line.number }))
+export function lineLabel(line: Line, t: TFunction, example = false, game?: GameState) {
+  if (line.name) return line.name
+  if (example) return t('sample.line' + line.number)
+  if (line.automaticName && game) {
+    const head = game.stations.find((station) => station.id === line.stops[0])
+    const tail = game.stations.find((station) => station.id === line.stops.at(-1))
+    if (head && tail) return t(line.circular ? 'line.loopName' : 'line.corridorName', {
+      from: stationLabel(game, head, t), to: stationLabel(game, tail, t),
+    })
+  }
+  return t('line.defaultName', { number: line.number })
 }
 export const trainCode = (train: { number: number }) => 'T' + String(train.number).padStart(2, '0')
 

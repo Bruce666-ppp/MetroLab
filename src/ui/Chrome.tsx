@@ -130,7 +130,7 @@ export function Footer({ playing, speed, setSpeed, game, selectLine }: {
     </div>
     <div className="footer-lines" aria-label={t('panel.lines')}>
       {playing && game.lines.slice(0, 8).map((line) =>
-        <button type="button" onClick={() => selectLine(line.id)} key={line.id} title={lineLabel(line, t)}><LineBadge line={line}/></button>)}
+        <button type="button" onClick={() => selectLine(line.id)} key={line.id} title={lineLabel(line, t, false, game)}><LineBadge line={line}/></button>)}
     </div>
     <MapLegend />
   </footer>

@@ -4,13 +4,14 @@ import { applyAction } from '../src/engine/actions.ts'
 import type { Action } from '../src/engine/actions.ts'
 import { gameMetrics, networkReach } from '../src/engine/analytics.ts'
 import { dayNumber, getCity } from '../src/engine/city.ts'
-import { blankTotals, FARE, INITIAL_BUDGET, measureTrack, netOperating, TRAIN_PRICE } from '../src/engine/economy.ts'
+import { blankTotals, FARE, INITIAL_BUDGET, measurePieces, netOperating, TRAIN_PRICE } from '../src/engine/economy.ts'
 import { exampleGame } from '../src/engine/example.ts'
 import { distance, walkDistance } from '../src/engine/geometry.ts'
 import { getDistrictAccess, LINE_COLORS, stationPreview, trainLoad, waitingAt } from '../src/engine/network.ts'
 import { admitGroup, generateDemand } from '../src/engine/passengers.ts'
 import { makeRoutingNetwork, routesFrom } from '../src/engine/routing.ts'
 import { advanceGame, newGame } from '../src/engine/simulation.ts'
+import { trackStraight } from '../src/engine/track.ts'
 import { trainPosition } from '../src/engine/trains.ts'
 import type { GameState, Point } from '../src/engine/types.ts'
 
@@ -54,8 +55,8 @@ test('the authored city has seven land uses, useful walking bridges and higher r
   assert.ok(city.bridges.length >= 4)
   const a = { x: 800, y: 530 }
   const b = { x: 1070, y: 530 }
-  const crossing = measureTrack(city, a, b)
-  const dry = measureTrack(city, { x: 410, y: 530 }, { x: 680, y: 530 })
+  const crossing = measurePieces(city, [trackStraight(a, b)])
+  const dry = measurePieces(city, [trackStraight({ x: 410, y: 530 }, { x: 680, y: 530 })])
   assert.equal(crossing.length, dry.length)
   assert.ok(crossing.waterLength > 60 && dry.waterLength === 0)
   assert.ok(crossing.price > dry.price)
@@ -216,7 +217,8 @@ test('line changes and station removal leave no dangling train, track or passeng
   const { game, stops, lines } = setup([west, central, market], [[0, 1]])
   const [a, b, c] = stops
   const first = execute(game, { type: 'saveLine', id: lines[0],
-    design: { name: 'Civic Express', color: '#ba4433', stops: [a, c, b], circular: true } }).game
+    design: { name: 'Civic Express', color: '#ba4433', stops: [a, c, b], circular: true,
+      controls: { [b + '|' + a]: [{ x: 540, y: 455 }] } } }).game
   assert.deepEqual(first.lines[0].stops, [a, c, b])
   assert.equal(first.lines[0].circular, true)
   assert.equal(first.trains[0].at, 0)

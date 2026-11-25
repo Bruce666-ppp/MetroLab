@@ -16,24 +16,6 @@ export function octilinear(a: Point, b: Point): Point[] {
   return [a, { x: a.x + diagonal, y: a.y + Math.sign(dy) * diagonal }, b]
 }
 
-export function pathLength(points: Point[]) {
-  return points.slice(1).reduce((length, point, index) => length + distance(points[index], point), 0)
-}
-
-export function pathPosition(points: Point[], fraction: number) {
-  let remaining = clamp(fraction, 0, 1) * pathLength(points)
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]
-    const b = points[i]
-    const length = distance(a, b)
-    if (remaining <= length || i === points.length - 1) {
-      return { ...interpolate(a, b, length === 0 ? 0 : remaining / length), angle: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI }
-    }
-    remaining -= length
-  }
-  return { ...points[0], angle: 0 }
-}
-
 export function isWater(city: City, point: Point, margin = 0) {
   const river = city.river(point.y)
   return Math.abs(point.x - river.center) <= river.halfWidth + margin

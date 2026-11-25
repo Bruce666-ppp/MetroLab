@@ -1,4 +1,6 @@
-import { clamp, isWater } from './geometry.ts'
+import { cityscape, districtActivity } from './cityscape.ts'
+import { clamp, distance, isWater } from './geometry.ts'
+import { districtPoint, districtScore } from './geography.ts'
 import type { City, District, GameState, Point, Zone } from './types.ts'
 
 const district = (
@@ -47,17 +49,17 @@ const marlow: City = {
   tripSamples: new Map(),
 }
 
-export function districtPoint(area: District, u: number, v: number): Point {
-  const cos = Math.cos(area.angle)
-  const sin = Math.sin(area.angle)
-  return { x: area.center.x + u * cos - v * sin, y: area.center.y + u * sin + v * cos }
-}
-
 for (const area of marlow.districts) {
+  const localLots = cityscape(marlow).buildings.filter((building) => building.district === area.id && building.opensAt <= 0.83)
   const samples = [[0, 0], [-0.36, -0.43], [0.36, -0.43], [-0.44, 0.36], [0.44, 0.36], [0, -0.65], [0, 0.66], [-0.68, 0], [0.68, 0]]
   marlow.tripSamples.set(area.id, samples
     .map(([u, v]) => districtPoint(area, u * area.radius[0], v * area.radius[1]))
-    .filter((point) => !isWater(marlow, point, 4)))
+    .filter((point) => !isWater(marlow, point, 4))
+    .map((point) => {
+      const closest = localLots.reduce((best, lot) =>
+        distance(lot.point, point) < distance(best, point) ? lot.point : best, { x: Infinity, y: Infinity })
+      return distance(closest, point) < 38 ? closest : point
+    }))
 }
 
 const cities: Record<string, City> = { [marlow.id]: marlow }
@@ -71,11 +73,7 @@ export function districtAt(city: City, point: Point) {
   let nearest = city.districts[0]
   let best = Infinity
   for (const area of city.districts) {
-    const dx = point.x - area.center.x
-    const dy = point.y - area.center.y
-    const cos = Math.cos(area.angle)
-    const sin = Math.sin(area.angle)
-    const score = ((dx * cos + dy * sin) / area.radius[0]) ** 2 + ((dy * cos - dx * sin) / area.radius[1]) ** 2
+    const score = districtScore(area, point)
     if (score < best) {
       nearest = area
       best = score
@@ -89,11 +87,15 @@ export const minuteOfDay = (minute: number) => minute % 1440
 export const isWeekend = (minute: number) => (dayNumber(minute) - 1) % 7 >= 5
 
 export function populationOf(area: District, game: GameState) {
-  return Math.round(area.residents * (game.growth[area.id] ?? 0))
+  return Math.round(activityOf(area, game).residents)
 }
 
 export function jobsOf(area: District, game: GameState) {
-  return Math.round(area.jobs * (game.growth[area.id] ?? 0))
+  return Math.round(activityOf(area, game).jobs)
+}
+
+export function activityOf(area: District, game: GameState) {
+  return districtActivity(getCity(game.cityId), area.id, game.growth[area.id] ?? 0)
 }
 
 export function developCity(city: City, game: GameState, accessibility: Record<string, number>) {

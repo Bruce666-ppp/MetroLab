@@ -1,4 +1,4 @@
-import { isWeekend, jobsOf, minuteOfDay, populationOf } from './city.ts'
+import { activityOf, isWeekend, minuteOfDay, populationOf } from './city.ts'
 import { FARE, post } from './economy.ts'
 import { clamp, distance } from './geometry.ts'
 import { stationCapacity } from './network.ts'
@@ -10,24 +10,27 @@ export const DEMAND_INTERVAL = 5
 const MAX_WAIT = 48
 const MAX_JOURNEY = 155
 
-function departures(game: GameState, district: District) {
+export function departureRates(game: GameState, district: District) {
   const hour = minuteOfDay(game.minute) / 60
   const weekend = isWeekend(game.minute)
-  const population = populationOf(district, game)
-  const jobs = jobsOf(district, game)
-  const visits = district.visitors * (game.growth[district.id] ?? 0)
+  const { residents: population, jobs, visits, students } = activityOf(district, game)
   const morning = !weekend && hour >= 6 && hour < 10
   const evening = !weekend && hour >= 16 && hour < 20
   const daytime = hour >= 8 && hour < 22
+  const shops = hour >= 11 && hour < 21
+  const termStart = !weekend && hour >= 6.75 && hour < 9
+  const termEnd = !weekend && hour >= 14.75 && hour < 17
   return {
     work: population * (morning ? 0.00082 : daytime && !weekend ? 0.000068 : 0.000015),
     home: jobs * (evening ? 0.00105 : daytime && !weekend ? 0.000075 : 0.000015),
-    leisure: population * (daytime ? weekend ? 0.00045 : 0.00020 : 0.000018),
+    leisure: population * (shops ? weekend ? 0.00049 : 0.00027 : daytime ? 0.000075 : 0.000018),
     return: visits * (hour >= 11 && hour < 23 ? weekend ? 0.00156 : 0.00080 : 0.000018),
+    school: termStart ? population * 0.00019 : 0,
+    schoolReturn: termEnd ? students * 0.00105 : 0,
   }
 }
 
-type Purpose = keyof ReturnType<typeof departures>
+type Purpose = keyof ReturnType<typeof departureRates>
 export type ActivityCount = keyof GameState['stationActivity'][string]
 
 export function trackStationActivity(game: GameState, id: string, activity: ActivityCount, count: number) {
@@ -37,10 +40,13 @@ export function trackStationActivity(game: GameState, id: string, activity: Acti
 }
 
 function attraction(game: GameState, area: District, purpose: Purpose) {
+  const profile = activityOf(area, game)
   switch (purpose) {
-    case 'work': return jobsOf(area, game)
-    case 'leisure': return area.visitors * (game.growth[area.id] ?? 0)
+    case 'work': return profile.jobs
+    case 'school': return profile.students
+    case 'leisure': return profile.visits
     case 'home':
+    case 'schoolReturn':
     case 'return': return populationOf(area, game)
   }
 }
@@ -71,7 +77,7 @@ export function generateDemand(city: City, game: GameState, access: Record<strin
     const plan = origins.links.length ? routesFrom(network, origins.links) : undefined
     const targets = districts.filter((target) => target !== origin)
     const expected = new Array<number>(targets.length).fill(0)
-    for (const [purpose, rate] of Object.entries(departures(game, origin)) as [Purpose, number][]) {
+    for (const [purpose, rate] of Object.entries(departureRates(game, origin)) as [Purpose, number][]) {
       if (rate === 0) continue
       const weights = targets.map((target) => attraction(game, target, purpose) / (1 + (distance(origin.center, target.center) / 510) ** 1.3))
       const sum = weights.reduce((a, b) => a + b, 0)
