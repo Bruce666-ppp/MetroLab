@@ -6,9 +6,10 @@ import { getCity, districtAt, minuteOfDay, populationOf } from '../engine/city.t
 import { relocationQuote } from '../engine/actions.ts'
 import { allTrack, openEndOf, sectionKey, trackHits } from '../engine/alignment.ts'
 import { canAfford, HKD } from '../engine/economy.ts'
-import { clamp, distance } from '../engine/geometry.ts'
+import { clamp, distance, isWater } from '../engine/geometry.ts'
+import { surfaceAt } from '../engine/hongKong.ts'
 import { stationCapacity, stationPreview, stationRadius, waitingAt } from '../engine/network.ts'
-import { quoteInsertion, quoteLine, selectableInsertions } from '../engine/planning.ts'
+import { quoteInsertion, quoteLine, roundPoint, selectableInsertions } from '../engine/planning.ts'
 import { layers } from '../engine/save.ts'
 import { curveSpeedKmh, ENGINEERING, minimumRadius, pieceTangent, radiusStatus, tangentsAgree, trackColors, trackLength, trackPath, unitsToMeters } from '../engine/track.ts'
 import { trainPosition } from '../engine/trains.ts'
@@ -237,6 +238,17 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   }
   const hoverQuote = hoverDraft ? quoteLine(game, draftDesign(game, hoverDraft), oldDraftLine) : undefined
   const drawnQuote = hoverQuote ?? draftQuote
+  const plannedStations = draftQuote?.newStations ?? []
+  const candidatePosition = draft && hover && !panning && !draft.control && !hoveredStation
+    ? roundPoint(hoverDraft?.proposed[ghostId] ?? hover.world) : undefined
+  const candidateOnLand = candidatePosition && (hongKong ? surfaceAt(candidatePosition) === 'land' :
+    candidatePosition.x >= 14 && candidatePosition.x <= city.width - 14 && candidatePosition.y >= 14 &&
+    candidatePosition.y <= city.height - 14 && !isWater(city, candidatePosition, 6))
+  let candidateName: string | undefined
+  if (candidatePosition && candidateOnLand && !plannedStations.some((station) => distance(station.position, candidatePosition) * scale < 11)) {
+    const candidate = hoverQuote?.newStations.find((station) => station.id === ghostId)
+    candidateName = candidate ? stationLabel(game, candidate, t) : stationNameAt(game, candidatePosition, t, game.stations.concat(plannedStations))
+  }
   const engineeringHit = hover && layer === 'engineering' && tool === 'select'
     ? trackHits(game.lines, hover.world, 12 / scale)[0] : undefined
   const inspectionMethod = engineeringHit?.section.method ?? engineeringHit?.section.pieces[0].method
@@ -250,15 +262,13 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const stationLabels: { left: number; right: number; top: number; bottom: number }[] = []
 
   return <div className={'city-map tool-' + tool + (panning ? ' is-panning' : '')} ref={viewport}>
-    {hongKong && <HongKongMap left={left} top={top} scale={scale} width={size.width} height={size.height} flat={flat}
-      zh={locale === 'zh-HK'} stations={game.stations}/>}
+    {hongKong && <HongKongMap left={left} top={top} scale={scale} width={size.width} height={size.height} flat={flat}/>}
     <svg ref={svg} className="city-map-svg" data-testid="city-map" aria-label={t('map.name')} role="group" tabIndex={0}
       viewBox={[left, top, size.width / scale, size.height / scale].join(' ')}
       onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
       onPointerCancel={(event) => pointerUp(event, true)} onPointerLeave={() => setHover(undefined)}
       onContextMenu={(event) => event.preventDefault()}>
-      {!hongKong && <BaseMap city={city} development={game.growth} detail={roadVisible} labels={scale >= 0.36}
-        flat={flat} landmarks={scale >= 1.03} t={t} />}
+      {!hongKong && <BaseMap city={city} development={game.growth} detail={roadVisible} flat={flat}/>}
       {night > 0 && <rect x={left} y={top} width={size.width / scale} height={size.height / scale} fill="#344c6b" opacity={night} pointerEvents="none" />}
       {hongKong ? <HongKongAnalysis layer={layer} hour={Math.floor(game.minute / 60)} stations={game.stations} served={reach.served}
         zone={selected?.type === 'district' ? selected.id : undefined} station={selectedStation}
@@ -331,10 +341,15 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
               fill="#fffdf6" stroke={draft.color} strokeWidth="1.7" vectorEffect="non-scaling-stroke"/>)}
           {draft.stops.map((id, index) => {
             const point = draft.proposed[id]
+            const station = plannedStations.find((station) => station.id === id)
             return point && <g key={id} data-testid="proposed-station" transform={'translate(' + point.x + ' ' + point.y + ')'}>
               <circle r={markerSize} fill="#fffff8" stroke={draft.color} strokeWidth="2.3" vectorEffect="non-scaling-stroke"/>
               <text y={0.55 / scale} textAnchor="middle" dominantBaseline="central" fontSize={9.5 / scale}
                 fill={draft.color} className="station-order">{index + 1}</text>
+              <text y={-markerSize - 9 / scale} textAnchor="middle" className="station-name" fontSize={12 / scale}
+                vectorEffect="non-scaling-stroke" data-testid="draft-station-name">
+                {station ? stationLabel(game, station, t) : stationNameAt(game, point, t)}
+              </text>
             </g>
           })}
           {hoverDraft?.proposed[ghostId] && <circle cx={hoverDraft.proposed[ghostId].x} cy={hoverDraft.proposed[ghostId].y}
@@ -357,7 +372,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
         const width = Math.min(140, 22 + label.length * 6.3) / scale
         const box = { left: x - width / 2, right: x + width / 2, top: y - 28 / scale, bottom: y - 8 / scale }
         const clear = !stationLabels.some((item) => item.left < box.right && item.right > box.left && item.top < box.bottom && item.bottom > box.top)
-        const visible = active || hoveredStation?.id === station.id || (!draft &&
+        const visible = active || hoveredStation?.id === station.id || order >= 0 || (!draft &&
           (hongKong ? clear && (scale > .94 || game.stations.length < 22) : scale > .94))
         if (visible) stationLabels.push(box)
         const flow = game.stationActivity[station.id]
@@ -392,6 +407,11 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
         {!hongKong && <circle r={preview.radius} className={'coverage-ring ' + (previewError ? 'invalid' : 'preview')} vectorEffect="non-scaling-stroke" />}
         <circle r={markerSize} className={previewError ? 'ghost-station invalid' : 'ghost-station'} vectorEffect="non-scaling-stroke" />
       </g>}
+      {hover && candidatePosition && candidateName && <text x={candidatePosition.x}
+        y={candidatePosition.y + (hover.screen.y < 36 ? 27 : -16) / scale}
+        textAnchor={hover.screen.x < 80 ? 'start' : hover.screen.x > size.width - 80 ? 'end' : 'middle'}
+        pointerEvents="none" className="station-name" fontSize={12 / scale} vectorEffect="non-scaling-stroke"
+        data-testid="draft-station-preview-name">{candidateName}</text>}
     </svg>
 
     <div className="map-layer-control">

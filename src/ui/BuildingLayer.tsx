@@ -1,5 +1,4 @@
 import { memo, useMemo } from 'react'
-import type { TFunction } from 'i18next'
 import { cityscape } from '../engine/cityscape.ts'
 import type { City } from '../engine/types.ts'
 import { buildingPaint } from './cityRendering.ts'
@@ -9,11 +8,9 @@ interface Props {
   development: Record<string, number>
   detail: boolean
   flat: boolean
-  landmarks: boolean
-  t: TFunction
 }
 
-export const BuildingLayer = memo(function BuildingLayer({ city, development, detail, flat, landmarks, t }: Props) {
+export const BuildingLayer = memo(function BuildingLayer({ city, development, detail, flat }: Props) {
   const paint = useMemo(() => buildingPaint(city, development, detail, flat), [city, development, detail, flat])
   const locations = cityscape(city).landmarks.filter((place) => development[place.district] > 0)
   return <g data-testid={flat ? 'flat-cityscape' : 'raised-cityscape'} pointerEvents="none">
@@ -30,7 +27,5 @@ export const BuildingLayer = memo(function BuildingLayer({ city, development, de
       }
       return <path key={index} d={path} fill={color} stroke={pass === 'roof' ? '#eff0e7' : 'none'} strokeWidth="0.35"/>
     })}
-    {landmarks && locations.filter((place) => place.type !== 'street').map((place) => <text key={place.id}
-      x={place.point.x + 9} y={place.point.y + 7} className="landmark-label">{t('landmark.' + place.id)}</text>)}
   </g>
 })

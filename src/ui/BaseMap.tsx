@@ -1,5 +1,4 @@
 import { memo } from 'react'
-import type { TFunction } from 'i18next'
 import type { City, Layer, Zone } from '../engine/types.ts'
 import { backgroundGreens, cartography, lake, mainRoads, parkLand, parkTrails } from './cartography.ts'
 import { BuildingLayer } from './BuildingLayer.tsx'
@@ -18,13 +17,10 @@ interface Props {
   city: City
   development: Record<string, number>
   detail: boolean
-  labels: boolean
   flat: boolean
-  landmarks: boolean
-  t: TFunction
 }
 
-export const BaseMap = memo(function BaseMap({ city, development, detail, labels, flat, landmarks, t }: Props) {
+export const BaseMap = memo(function BaseMap({ city, development, detail, flat }: Props) {
   const map = cartography(city)
   return <g className="base-map" pointerEvents="none">
     <defs>
@@ -66,16 +62,7 @@ export const BaseMap = memo(function BaseMap({ city, development, detail, labels
         <g stroke="#b5b6a8" strokeWidth="10">{map.bridges.map((path, i) => <path key={i} d={path} />)}</g>
         <g stroke="#fffbef" strokeWidth="6.8">{map.bridges.map((path, i) => <path key={i} d={path} />)}</g>
       </g>
-      <BuildingLayer city={city} development={development} detail={detail} flat={flat} landmarks={landmarks} t={t}/>
-      <text x="910" y="677" textAnchor="middle" transform="rotate(-74 910 677)" className="river-label">{t('map.river')}</text>
-      <text x="1035" y="113" textAnchor="middle" transform="rotate(-41 1035 113)" className="river-label secondary">{t('map.river')}</text>
-      {labels && city.districts.map((area) => {
-        const point = area.label ?? area.center
-        return <text key={area.id} x={point.x} y={point.y} textAnchor="middle"
-          className={'district-label' + (development[area.id] ? '' : ' future')}>
-          {t('district.' + area.id)}
-        </text>
-      })}
+      <BuildingLayer city={city} development={development} detail={detail} flat={flat}/>
     </g>
   </g>
 })

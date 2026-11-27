@@ -23,6 +23,7 @@ const map = (page) => page.getByTestId('city-map')
 const stations = (page) => page.getByTestId('map-station')
 const exact = (page, name) => page.getByRole('button', { name, exact: true })
 const dock = (page) => page.getByTestId('draw-controls')
+const hoverName = (page) => page.getByTestId('draft-station-preview-name')
 const central = [635.2, 911.6]
 const tsimShaTsui = [798.4, 722.9]
 const kennedyTown = [303.5, 907.4]
@@ -39,6 +40,11 @@ async function clickMap(page, point, shift = false) {
   const xy = await screen(page, point)
   if (shift) await page.keyboard.down('Shift')
   try { await page.mouse.click(xy.x, xy.y) } finally { if (shift) await page.keyboard.up('Shift') }
+}
+
+async function moveMap(page, point) {
+  const xy = await screen(page, point)
+  await page.mouse.move(xy.x, xy.y)
 }
 
 async function ready(page) {
@@ -68,6 +74,13 @@ async function save(page, zh = false) {
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
   page.setDefaultTimeout(10000)
+  await page.addInitScript(() => {
+    const paintText = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (...args) {
+      if (this.canvas.dataset.testid === 'hk-map-canvas') this.canvas.dataset.paintedLabel = 'true'
+      return paintText.apply(this, args)
+    }
+  })
   await open(page)
   await page.getByRole('heading', { name: 'Hong Kong' }).waitFor()
   await ready(page)
@@ -88,11 +101,18 @@ try {
   assert.notEqual(await map(page).getAttribute('viewBox'), zoomedCamera)
   await exact(page, 'Reset map view').click()
   assert.equal(await map(page).getAttribute('viewBox'), initialCamera)
+  assert.equal(await page.getByTestId('hk-map-canvas').getAttribute('data-painted-label'), null)
 
   await page.getByRole('button', { name: /Career mode/ }).click()
   const startupBudget = await page.getByTestId('metric-budget').innerText()
   assert.match(startupBudget, /HKD.*38/)
   await exact(page, 'Draw line').click()
+  await moveMap(page, central)
+  await hoverName(page).filter({ hasText: /^Central$/ }).waitFor()
+  await moveMap(page, kennedyTown)
+  await hoverName(page).filter({ hasText: /^Kennedy Town$/ }).waitFor()
+  await moveMap(page, [735, 819])
+  await hoverName(page).waitFor({ state: 'hidden' })
   await clickMap(page, central)
   await clickMap(page, [(central[0] + tsimShaTsui[0]) / 2, (central[1] + tsimShaTsui[1]) / 2])
   assert.equal(await page.getByTestId('proposed-station').count(), 0)
@@ -102,8 +122,15 @@ try {
   await clickMap(page, central, true)
   await clickMap(page, tsimShaTsui, true)
   assert.equal(await page.getByTestId('proposed-station').count(), 2)
+  assert.deepEqual(await page.getByTestId('draft-station-name').allTextContents(), ['Central', 'Tsim Sha Tsui'])
   assert.ok(await dock(page).getByRole('button', { name: 'Build alignment' }).isDisabled())
   await dock(page).getByLabel('Construction method').selectOption('underground')
+  await exact(page, '繁中').click()
+  await page.getByTestId('draft-station-name').filter({ hasText: /^中環$/ }).waitFor()
+  assert.deepEqual(await page.getByTestId('draft-station-name').allTextContents(), ['中環', '尖沙咀'])
+  await moveMap(page, kennedyTown)
+  await hoverName(page).filter({ hasText: /^堅尼地城$/ }).waitFor()
+  await exact(page, 'English').click()
   const budget = page.getByTestId('construction-budget')
   assert.match(await budget.innerText(), /Marine tunnel supplement/)
   assert.match(await budget.innerText(), /Station works/)
@@ -140,6 +167,19 @@ try {
   assert.equal(await stations(page).count(), 2)
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click()
   await page.getByRole('heading', { name: 'Kennedy Town', exact: true }).waitFor()
+
+  await exact(page, 'Draw line').click()
+  await moveMap(page, kennedyTown)
+  await page.mouse.down()
+  try {
+    await moveMap(page, [961.4, 376.5])
+    await hoverName(page).filter({ hasText: /^Kowloon City$/ }).waitFor()
+    await moveMap(page, [1003.9, 247.8])
+    await hoverName(page).filter({ hasText: /^Wong Tai Sin$/ }).waitFor()
+    assert.equal(await stations(page).filter({ hasText: 'Kennedy Town' }).locator('.station-name').textContent(), 'Kennedy Town')
+  } finally { await page.mouse.up() }
+  await page.keyboard.press('Escape')
+  await hoverName(page).waitFor({ state: 'hidden' })
 
   await exact(page, 'Draw line').click()
   await clickMap(page, start)
@@ -202,9 +242,10 @@ try {
   assert.equal(await stations(legacy).count(), legacyGame.stations.length)
   assert.equal(await legacy.getByTestId('committed-track').count(), legacyGame.lines.length)
   await legacy.getByTestId('raised-cityscape').waitFor()
+  assert.equal(await legacy.locator('.base-map text').count(), 0)
 
   assert.deepEqual(errors, [])
-  console.log('Hong Kong desktop construction, operations, layers, language, save loading, mobile layout and Marlow migration passed.')
+  console.log('Unlabelled basemaps, live and placed station names, construction, operations, languages, mobile layout and Marlow migration passed.')
 } finally {
   await browser.close()
 }

@@ -39,8 +39,8 @@ function stationPlace(game: GameState, position: Point) {
 
 const nameCache = new WeakMap<Station[], { growth: GameState['growth']; places: Map<string, ReturnType<typeof stationPlace>> }>()
 
-export function stationNameAt(game: GameState, position: Point, t: TFunction) {
-  if (game.hongKong) return localizedName(hongKongName(position, game.stations), t)
+export function stationNameAt(game: GameState, position: Point, t: TFunction, stations = game.stations) {
+  if (game.hongKong) return localizedName(hongKongName(position, stations), t)
   return t(stationPlace(game, position).key)
 }
 

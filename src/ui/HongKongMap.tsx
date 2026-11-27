@@ -1,7 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { hongKong } from '../engine/hongKong.ts'
-import type { Place, Polygon, Ring, Road } from '../engine/hongKong.ts'
-import type { Station } from '../engine/types.ts'
+import type { Polygon, Ring, Road } from '../engine/hongKong.ts'
 
 const files = import.meta.env.BASE_URL + 'data/hong-kong/'
 const map = hongKong.map
@@ -124,53 +123,8 @@ function paintBuilding(context: CanvasRenderingContext2D, building: Building, sc
   context.translate(-right, lift)
 }
 
-const fixedLabels = [
-  { x: 751, y: 799, en: 'Victoria Harbour', zh: '維多利亞港', kind: -2 },
-  { x: 675, y: 409, en: 'Kowloon', zh: '九龍', kind: -1 },
-  { x: 901, y: 1050, en: 'Hong Kong Island', zh: '香港島', kind: -1 },
-]
-const primaryLabels = new Set(['Central', 'Kennedy Town', 'Tsim Sha Tsui', 'Stanley', 'Kowloon City', 'Mong Kok', 'Wong Tai Sin',
-  'Kwun Tong', 'Chai Wan', 'Aberdeen', 'North Point', 'Causeway Bay'])
-
-function paintLabels(context: CanvasRenderingContext2D, stationList: Station[], scale: number,
-  left: number, top: number, width: number, height: number, zh: boolean) {
-  const placed: Bounds[] = stationList.map(({ position, names }) => {
-    const x = (position.x - left) * scale, y = (position.y - top) * scale
-    const text = zh ? names?.zh : names?.en
-    const edge = Math.max(34, (text?.length ?? 0) * (zh ? 6.7 : 3.5) + 5)
-    return { left: x - edge, right: x + edge, top: y - 32, bottom: y + 10 }
-  })
-  const names = new Set<string>()
-  const maxKind = scale < .34 ? 0 : scale < .74 ? 1 : scale < 1.7 ? 3 : 5
-  const priority = (place: Place) => place.kind + (place.source === 0 ? .2 : .6) - (primaryLabels.has(place.en) ? 2 : 0)
-  const list = [...fixedLabels, ...hongKong.places.filter((place) => place.kind <= maxKind).sort((a, b) => priority(a) - priority(b))]
-  context.textAlign = 'center'
-  context.textBaseline = 'middle'
-  for (const place of list) {
-    const x = (place.x - left) * scale, y = (place.y - top) * scale
-    const name = zh ? place.zh : place.en
-    if (x < 12 || x > width - 12 || y < 17 || y > height - 16 || names.has(name)) continue
-    if (place.kind === -1 && scale > 1.1) continue
-    if (place.kind < 0 && scale < .28 && place.kind !== -2) continue
-    const size = place.kind < 0 ? (place.kind === -2 ? 16 : 17) : place.kind < 2 ? 12 : 10
-    context.font = (place.kind < 2 ? '650 ' : '500 ') + size + 'px Geist Variable, system-ui, Microsoft JhengHei, sans-serif'
-    context.letterSpacing = place.kind < 0 ? '1.5px' : place.kind < 2 ? '.35px' : '0px'
-    const edge = context.measureText(name).width / 2 + (place.kind < 0 ? 10 : 5)
-    const rect = { left: x - edge, right: x + edge, top: y - size * .83, bottom: y + size * .83 }
-    if (placed.some((area) => rect.left < area.right && rect.right > area.left && rect.top < area.bottom && rect.bottom > area.top)) continue
-    placed.push(rect)
-    names.add(name)
-    context.lineJoin = 'round'
-    context.strokeStyle = place.kind === -2 ? '#c0dae0' : '#eeeddae6'
-    context.lineWidth = place.kind < 2 ? 3.7 : 2.5
-    context.strokeText(name, x, y)
-    context.fillStyle = place.kind === -2 ? '#315f72' : place.kind < 2 ? '#384b42' : '#535d53'
-    context.fillText(name, x, y)
-  }
-}
-
-export const HongKongMap = memo(function HongKongMap({ left, top, scale, width, height, flat, zh, stations }: {
-  left: number; top: number; scale: number; width: number; height: number; flat: boolean; zh: boolean; stations: Station[]
+export const HongKongMap = memo(function HongKongMap({ left, top, scale, width, height, flat }: {
+  left: number; top: number; scale: number; width: number; height: number; flat: boolean
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   const relief = useRef<HTMLImageElement | undefined>(undefined)
@@ -246,8 +200,6 @@ export const HongKongMap = memo(function HongKongMap({ left, top, scale, width, 
       context.strokeStyle = '#7c9ca066'
       context.lineWidth = 1.23 / scale
       context.stroke(paths.coast)
-      context.setTransform(ratio, 0, 0, ratio, 0, 0)
-      paintLabels(context, stations, scale, left, top, width, height, zh)
     })
     return () => cancelAnimationFrame(frame)
   })

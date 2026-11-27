@@ -155,21 +155,6 @@ a { color: inherit; }
 .map-station { cursor: pointer; }
 .tool-station .map-station, .tool-move .map-station { cursor: crosshair; }
 .map-station:focus-visible { filter: drop-shadow(0 0 4px #1b9479); outline: none; }
-.district-label {
-  fill: #526158;
-  font-size: 15px;
-  font-weight: 690;
-  letter-spacing: 1.55px;
-  text-transform: uppercase;
-  paint-order: stroke;
-  stroke: #f1f0e6;
-  stroke-width: 3.6px;
-  stroke-linejoin: round;
-}
-.district-label.future { opacity: .68; }
-:lang(zh-HK) .district-label { letter-spacing: 1.7px; font-weight: 700; }
-.river-label { fill: #427683; font-size: 15px; font-weight: 580; letter-spacing: 3px; text-transform: uppercase; }
-.river-label.secondary { font-size: 11.5px; fill: #59838e; }
 .station-name { fill: #214944; font-weight: 700; stroke: #fbfbf5; stroke-width: 3px; stroke-linejoin: round; paint-order: stroke; }
 .station-order { font-weight: 760; }
 .train-dot { transition: transform 120ms linear; }
@@ -611,8 +596,6 @@ kbd { font-family: var(--mono); font-size: .76rem; border-radius: 4px; border: 1
   border: 0; border-left: 1px solid #d8e2d7; border-radius: 0 5px 5px 0;
   color: #3e695d; background: #f2f7ef; padding: 0 8px; font-size: .77rem; font-weight: 630; }
 .view-switch:hover { background: #e4f0e5; }
-.landmark-label { fill: #355854; font-size: 10.9px; letter-spacing: .025em; font-weight: 650;
-  paint-order: stroke; stroke: #f6f4e8; stroke-width: 2.1px; stroke-linejoin: round; }
 
 @media (max-width: 1100px) {
   .draw-controls { right: 58px; left: 11px; }
