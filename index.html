@@ -4,12 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#163537" />
-    <meta name="description" content="MetroLab is a city railway planning and operations simulator." />
+    <meta name="description" content="Design, build and operate your own metro in a Hong Kong shaped by real geography and travel demand." />
     <link rel="icon" href="%BASE_URL%mark.svg" type="image/svg+xml" />
-    <title>MetroLab</title>
+    <link rel="preload" as="fetch" href="%BASE_URL%data/hong-kong/model.json" crossorigin="anonymous" />
+    <title>MetroLab · Hong Kong</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><p class="boot-status" role="status">MetroLab · Hong Kong</p></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

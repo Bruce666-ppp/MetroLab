@@ -1,24 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Check, MapPinPlus, Route, TriangleAlert, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { applyAction } from '../engine/actions.ts'
+import { applyAction, relocationQuote } from '../engine/actions.ts'
 import type { Action } from '../engine/actions.ts'
 import { gameMetrics, networkReach } from '../engine/analytics.ts'
+import { sectionKey } from '../engine/alignment.ts'
 import { getCity } from '../engine/city.ts'
-import { TRAIN_REFUND } from '../engine/economy.ts'
-import { exampleGame } from '../engine/example.ts'
+import { canAfford, trainRefund } from '../engine/economy.ts'
 import { distance } from '../engine/geometry.ts'
-import { MIN_STATION_GAP, stationPreview } from '../engine/network.ts'
-import { quoteInsertion, quoteLine } from '../engine/planning.ts'
+import { HONG_KONG, surfaceAt } from '../engine/hongKong.ts'
+import { stationGap, stationPreview } from '../engine/network.ts'
+import { quoteInsertion, quoteLine, roundPoint } from '../engine/planning.ts'
 import { clearGame, loadGame, saveGame, saveSettings } from '../engine/save.ts'
 import type { Settings } from '../engine/save.ts'
 import { advanceGame, newGame, TICK } from '../engine/simulation.ts'
-import type { GameState, Line, Mode, Speed } from '../engine/types.ts'
+import type { GameState, Line, Mode, Speed, TrackMethod } from '../engine/types.ts'
 import { CityMap } from './CityMap.tsx'
 import { Footer, Header, Indicators, ModeMenu, Tools } from './Chrome.tsx'
 import { ConfirmDialog, HelpDialog, SettingsDialog } from './Dialogs.tsx'
-import { money } from './format.ts'
-import { addGeometryControl, appendDraftStop, availableLineColor, draftDesign, editControl, extensionChoices, makeDraft, smoothDraft } from './interaction.ts'
+import { gameMoney } from './format.ts'
+import { addGeometryControl, appendDraftStop, appendHongKongStop, availableLineColor, draftDesign, editControl, extensionChoices, makeDraft, smoothDraft } from './interaction.ts'
 import type { LineDraft, MapTarget, Selection, Tool } from './interaction.ts'
 import { AnalyticsPanel, DistrictPanel, InsertionPanel, LineEditor, LinePanel, NetworkOverview, StationPanel, TrainPanel } from './Panels.tsx'
 
@@ -27,12 +28,10 @@ type Confirmation = { title: string; body: string; action: () => void; destructi
 type Notice = { key: string; error?: boolean; milestone?: string }
 type Insertion = { point: MapTarget['point']; available: string[]; chosen: string[] }
 
-const suggested = [{ x: 295, y: 416 }, { x: 747, y: 505 }]
-
 export function App({ storage, initialSettings }: { storage: StorageIO; initialSettings: Settings }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
-  const [example] = useState(exampleGame)
+  const [example] = useState(() => newGame('career', HONG_KONG))
   const [game, setGame] = useState(example)
   const current = useRef(game)
   const [playing, setPlaying] = useState(false)
@@ -40,6 +39,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   const [settings, setSettings] = useState(initialSettings)
   const [speed, setSpeed] = useState<Speed>(0)
   const [tool, setTool] = useState<Tool>('select')
+  const [stationMethod, setStationMethod] = useState<TrackMethod>('underground')
   const [selection, setSelection] = useState<Selection>()
   const [tab, setTab] = useState<'network' | 'analytics'>('network')
   const [dialog, setDialog] = useState<'settings' | 'help'>()
@@ -75,11 +75,30 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
 
   useEffect(() => {
     if (!playing || speed === 0) return
+    let worker: Worker | undefined
+    let waiting: GameState | undefined
+    let ready = false
+    if (game.hongKong && typeof Worker !== 'undefined') {
+      worker = new Worker(new URL('../engine/simulation.worker.ts', import.meta.url), { type: 'module' })
+      worker.onmessage = (event: MessageEvent<GameState | 'ready'>) => {
+        if (event.data === 'ready') { ready = true; return }
+        if (waiting && waiting === current.current) {
+          // Clock updates leave geography fixed. Keep those references stable across the worker boundary.
+          replaceGame({ ...event.data, stations: waiting.stations, growth: waiting.growth })
+        }
+        waiting = undefined
+      }
+      worker.onerror = () => { worker?.terminate(); worker = undefined; waiting = undefined }
+    }
     const timer = window.setInterval(() => {
-      if (!document.hidden) replaceGame(advanceGame(current.current, TICK * speed))
+      if (document.hidden || waiting) return
+      if (worker && ready) {
+        waiting = current.current
+        worker.postMessage({ game: waiting, minutes: TICK * speed })
+      } else if (!worker) replaceGame(advanceGame(current.current, TICK * speed))
     }, 125)
-    return () => window.clearInterval(timer)
-  }, [speed, playing])
+    return () => { window.clearInterval(timer); worker?.terminate() }
+  }, [speed, playing, game.cityId])
 
   useEffect(() => {
     if (!playing) return
@@ -208,7 +227,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       color: line?.color ?? availableLineColor(current.current), automaticName: line ? line.automaticName : true })
   }
 
-  function addStop(id: string, point?: MapTarget['point']) {
+  function addStop(id: string, point?: MapTarget['point'], tolerance = 0) {
     const active = draftCurrent.current
     if (!active || active.stops.includes(id)) return
     const state = current.current
@@ -216,8 +235,8 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       setNotice({ key: 'error.invalidStops', error: true })
       return
     }
-    let next = appendDraftStop(active, id, point)
-    if (active.kind === 'draw' && !active.stops.length && !point) {
+    let next = state.hongKong ? appendHongKongStop(state, active, id, point, tolerance) : appendDraftStop(active, id, point)
+    if (active.kind === 'draw' && !active.stops.length && !point && !active.pending.length) {
       const line = extensionChoices(state, id)[0]
       next = { ...next, anchor: id, id: line?.id, name: line?.name ?? '',
         color: line?.color ?? active.color, automaticName: line ? line.automaticName : true }
@@ -225,11 +244,24 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
     editDraft(next)
   }
 
+  function setDraftMethod(method: TrackMethod) {
+    const active = draftCurrent.current
+    if (!active) return
+    const last = active.stops.at(-1), before = active.stops.at(-2)
+    if (active.kind !== 'draw' || active.pending.length || !last || !before) {
+      editDraft({ ...active, method })
+      return
+    }
+    const stationMethods = { ...active.stationMethods }
+    if (active.proposed[last]) stationMethods[last] = method
+    if (active.stops.length === 2 && active.proposed[before]) stationMethods[before] = method
+    editDraft({ ...active, method, stationMethods, methods: { ...active.methods, [sectionKey(before, last)]: method } })
+  }
+
   function commitLine() {
     const editing = draftCurrent.current
     if (!editing) return
-    if (editing.stops.length < 2) { setNotice({ key: 'error.needsStops', error: true }); return }
-    if (editing.pending.length || editing.control) {
+    if ((!current.current.hongKong && editing.pending.length) || editing.control) {
       setNotice({ key: editing.control ? 'engineering.moveControl' : 'engineering.finishControl', error: true })
       return
     }
@@ -247,27 +279,58 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   }
 
   function clickMap(target: MapTarget) {
+    const state = current.current
+    const city = getCity(state.cityId)
+    const confirmCost = (cost: number, run: () => void) => {
+      if (!canAfford(state, cost)) { setNotice({ key: 'error.funds', error: true }); return }
+      if (city.hongKong) setConfirmation({ title: t('hk.confirmConstruction'), body: t('hk.confirmCost', {
+        cost: gameMoney(state, cost, locale, false), balance: state.mode === 'sandbox' ? t('common.infinity') : gameMoney(state, state.funds - cost, locale, false),
+      }), action: run })
+      else run()
+    }
     if (tool === 'station') {
       if (target.selection?.type === 'station') { pick(target.selection); return }
       if (target.trackPoint && target.trackLines?.length) {
         const { trackPoint: point, trackLines: available } = target
-        if (available.length > 1) setInsertion({ point, available, chosen: [available[0]] })
+        if (available.length > 1 || city.hongKong) setInsertion({ point, available, chosen: [available[0]] })
         else insertStation(point, available)
         return
       }
       setInsertion(undefined)
-      const result = action({ type: 'buildStation', point: target.point }, 'notice.built')
-      if (result?.id) setSelection({ type: 'station', id: result.id })
+      const point = roundPoint(target.point)
+      const quote = stationPreview(city, state, point, undefined, stationMethod)
+      if (quote.error) { setNotice({ key: 'error.' + quote.error, error: true }); return }
+      confirmCost(quote.cost, () => {
+        const result = action({ type: 'buildStation', point, method: stationMethod }, 'notice.built')
+        if (result?.id) setSelection({ type: 'station', id: result.id })
+      })
     } else if (tool === 'move' && selection?.type === 'station') {
-      const result = action({ type: 'moveStation', id: selection.id, point: target.point }, 'notice.moved')
-      if (result?.id) cancel()
+      const quote = relocationQuote(state, selection.id, target.point)
+      if (quote.error) { setNotice({ key: 'error.' + quote.error, error: true }); return }
+      confirmCost(quote.cost, () => {
+        const result = action({ type: 'moveStation', id: selection.id, point: target.point }, 'notice.moved')
+        if (result?.id) cancel()
+      })
     } else if (tool === 'line') {
       const active = draftCurrent.current
       if (!active) return
       if (active.control) {
         editDraft(editControl(active, active.control, target.point))
-      } else if (target.control && !target.shift) {
+      } else if (target.control && !target.shift && !active.placingStation) {
         editDraft({ ...active, control: target.control }, false)
+      } else if (city.hongKong) {
+        if (target.selection?.type === 'station' && !active.placingControl) addStop(target.selection.id)
+        else if (target.shift || active.placingStation) {
+          const preview = stationPreview(city, state, target.point, undefined, active.method)
+          if (preview.error) setNotice({ key: 'error.' + preview.error, error: true })
+          else addStop('draft-' + nextDraftId.current++, target.point, target.surveyTolerance)
+        } else if (surfaceAt(target.point) === 'outside') setNotice({ key: 'error.outsideArea', error: true })
+        else if (active.kind === 'edit' && active.insertion === undefined && active.stops.length >= 2 && !active.alignmentEnds?.head && !active.alignmentEnds?.tail) {
+          editDraft(addGeometryControl(state, active, target.point))
+        } else {
+          const previous = active.pending.at(-1)
+          if (!previous || distance(previous, target.point) >= .45) editDraft({ ...active, pending: [...active.pending, target.point], placingControl: false })
+        }
       } else if (target.shift || active.placingControl) {
         if (!active.stops.length) setNotice({ key: 'engineering.startAtStation', error: true })
         else if (active.kind === 'edit' && active.insertion === undefined) {
@@ -276,10 +339,9 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       } else if (target.selection?.type === 'station') {
         addStop(target.selection.id)
       } else {
-        const state = current.current
-        const preview = stationPreview(getCity(state.cityId), state, target.point)
+        const preview = stationPreview(city, state, target.point)
         const close = Object.entries(active.proposed).some(([id, point]) =>
-          active.stops.includes(id) && distance(point, target.point) < MIN_STATION_GAP)
+          active.stops.includes(id) && distance(point, target.point) < stationGap(city))
         const error = preview.error ?? (close ? 'tooClose' : undefined)
         if (error) setNotice({ key: 'error.' + error, error: true })
         else addStop('draft-' + nextDraftId.current++, target.point)
@@ -326,7 +388,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   }
 
   function startGame(mode: Mode) {
-    resetWorkspace(newGame(mode), true)
+    resetWorkspace(newGame(mode, HONG_KONG), true)
     saveCurrent()
   }
 
@@ -394,9 +456,6 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   const selectTrain = (id: string) => pick({ type: 'train', id })
   const back = () => pick(undefined)
   const changeLanguage = (language: Settings['language']) => setSettings((value) => ({ ...value, language }))
-  const hoveredSites = playing && settings.guides && game.stations.length < 2
-    ? suggested.filter((point) => game.stations.every((station) => distance(point, station.position) >= MIN_STATION_GAP) &&
-      !draft?.stops.some((id) => draft.proposed[id] && distance(point, draft.proposed[id]) < MIN_STATION_GAP)) : []
   const line = selection?.type === 'line' ? game.lines.find((entry) => entry.id === selection.id) : undefined
   const station = selection?.type === 'station' ? game.stations.find((entry) => entry.id === selection.id) : undefined
   const train = selection?.type === 'train' ? game.trains.find((entry) => entry.id === selection.id) : undefined
@@ -417,15 +476,18 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
           flat={settings.view === 'plan'} toggleView={() => setSettings((value) =>
             ({ ...value, view: value.view === 'plan' ? 'city' : 'plan' }))}
           draft={draft} draftQuote={draftQuote} insertionPoint={insertion?.point}
-          suggestions={hoveredSites} clickMap={clickMap} addStop={addStop}
+          clickMap={clickMap} addStop={addStop} stationMethod={stationMethod} setStationMethod={setStationMethod}
           chooseDraftLine={chooseDraftLine} commitLine={commitLine} cancelDraft={cancel} smooth={smooth}
+          draftMethod={setDraftMethod}
           toggleControl={() => {
             const active = draftCurrent.current
-            if (active) editDraft({ ...active, placingControl: !active.placingControl }, false)
+            if (active) editDraft(game.hongKong ? { ...active, placingStation: !active.placingStation } :
+              { ...active, placingControl: !active.placingControl }, false)
           }}/>
         {showHint && tool !== 'line' && <div className="map-mode-hint">
           <MapPinPlus size={16}/>
-          <span>{t('tool.' + hint)}</span><button type="button" onClick={cancel} aria-label={t('common.cancel')} title={t('common.cancel')}><kbd>Esc</kbd></button>
+          <span>{t(game.hongKong && tool === 'station' ? 'hk.stationHint' : 'tool.' + hint)}</span>
+          <button type="button" onClick={cancel} aria-label={t('common.cancel')} title={t('common.cancel')}><kbd>Esc</kbd></button>
         </div>}
         {notice && <div className={'game-toast' + (notice.error ? ' error' : '')} role="status">
           {notice.error ? <TriangleAlert size={17}/> : <Check size={17}/>}
@@ -453,14 +515,16 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
                 title: t('station.removeTitle'), body: t('station.removeBody'),
                 destructive: true, action: () => { if (act({ type: 'removeStation', id: station.id })) back() },
               })}/>
-            : line ? <LinePanel game={game} line={line} playing={playing} back={back} station={selectStation}
+            : line ? <LinePanel key={line.id} game={game} line={line} playing={playing} back={back} station={selectStation}
+              removeSection={(index) => setConfirmation({ title: t('hk.removeSection'), body: t('hk.removeSectionBody'), destructive: true,
+                action: () => { const result = action({ type: 'removeSection', id: line.id, index }); if (result && !result.id) back() } })}
               edit={() => beginLine(line)} act={act} pickTrain={selectTrain} remove={() => setConfirmation({
                 title: t('line.removeTitle'), body: t('line.removeBody'), destructive: true,
                 action: () => { if (act({ type: 'removeLine', id: line.id })) back() },
               })}/>
             : train ? <TrainPanel game={game} train={train} playing={playing} back={() => selectLine(train.lineId)} act={act}
               pickLine={() => selectLine(train.lineId)} sell={() => setConfirmation({
-                title: t('train.sellTitle'), body: t('train.sellBody', { cost: money(TRAIN_REFUND, locale) }), destructive: true,
+                title: t('train.sellTitle'), body: t('train.sellBody', { cost: gameMoney(game, trainRefund(game), locale) }), destructive: true,
                 action: () => { if (act({ type: 'sellTrain', id: train.id })) selectLine(train.lineId) },
               })}/>
             : selection?.type === 'district' ? <DistrictPanel game={game} reach={reach} id={selection.id} back={back}/>
@@ -475,7 +539,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       language={changeLanguage} hints={() => setSettings((value) => ({ ...value, guides: !value.guides }))}
       save={() => { saveCurrent(true); setDialog(undefined) }} load={resume} reset={requestReset} menu={mainMenu}
       close={() => setDialog(undefined)}/>}
-    {dialog === 'help' && <HelpDialog close={() => setDialog(undefined)}/>}
+    {dialog === 'help' && <HelpDialog close={() => setDialog(undefined)} hongKong={Boolean(game.hongKong)}/>}
     {confirmation && <ConfirmDialog title={confirmation.title} body={confirmation.body} destructive={confirmation.destructive}
       close={() => setConfirmation(undefined)} onConfirm={() => { setConfirmation(undefined); confirmation.action() }}/>}
   </div>

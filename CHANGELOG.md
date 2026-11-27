@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 — 2026-11-27
+
+- Set new games in Hong Kong Island and Kowloon with a real coastline, terrain, buildings, streets and bilingual names. Added zoom-dependent city rendering and geographic layer attribution.
+- Added free track planning without stations, at-grade, elevated and underground construction, marine tunnel supplements and HKD construction quotes. Extended track and station editing to approach tracks on lines without service.
+- Added Census population, TPEDM job estimates, road-based access, gravity demand calibrated to the local travel survey, fare-sensitive route choice and non-rail alternatives.
+- Added line fares, suspension and HKD operating accounts, passenger-flow and employment layers, regional desire lines and network, station and line statistics.
+- Added Hong Kong Traditional Chinese, schema-four saves, a simulation worker, deterministic geographic and operations tests and a Hong Kong browser smoke test.
+
 ## 1.1.0 — 2026-11-25
 
 - Added the V0.2 cityscape and rail engineering update with switchable 2.5D and plan views, mixed-use buildings, named landmarks and school trips.

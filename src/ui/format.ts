@@ -1,18 +1,19 @@
 import type { TFunction } from 'i18next'
 import { dayNumber, districtAt, getCity, minuteOfDay } from '../engine/city.ts'
 import { placeName } from '../engine/cityscape.ts'
-import type { GameState, Line, Point, Station } from '../engine/types.ts'
+import { hongKongName } from '../engine/hongKong.ts'
+import type { BilingualName, District, GameState, Line, Point, Station } from '../engine/types.ts'
 
 const formatters = new Map<string, Intl.NumberFormat>()
-function numberFormat(locale: string, kind: 'number' | 'percent' | 'money' | 'compact') {
-  const key = locale + kind
+function numberFormat(locale: string, kind: 'number' | 'percent' | 'money' | 'compact', currency = 'USD') {
+  const key = locale + kind + currency
   const existing = formatters.get(key)
   if (existing) return existing
   const options: Intl.NumberFormatOptions = {
     number: { maximumFractionDigits: 1 },
     percent: { style: 'percent', maximumFractionDigits: 0 },
-    compact: { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 },
-    money: { style: 'currency', currency: 'USD', maximumFractionDigits: 0 },
+    compact: { style: 'currency', currency, currencyDisplay: currency === 'HKD' ? 'code' : 'symbol', notation: 'compact', maximumFractionDigits: 2 },
+    money: { style: 'currency', currency, currencyDisplay: currency === 'HKD' ? 'code' : 'symbol', maximumFractionDigits: 0 },
   }[kind] as Intl.NumberFormatOptions
   const formatter = new Intl.NumberFormat(locale, options)
   formatters.set(key, formatter)
@@ -25,9 +26,11 @@ export function number(n: number, locale: string) {
 export function percent(n: number | undefined, locale: string) {
   return n === undefined ? '—' : numberFormat(locale, 'percent').format(n)
 }
-export function money(n: number, locale: string, compact = true) {
-  return numberFormat(locale, compact ? 'compact' : 'money').format(n)
+export function gameMoney(game: GameState, n: number, locale: string, compact = true) {
+  return numberFormat(locale, compact ? 'compact' : 'money', game.hongKong ? 'HKD' : 'USD').format(n)
 }
+export const localizedName = (names: BilingualName, t: TFunction) => t('app.languageCode') === 'zh-HK' ? names.zh : names.en
+export const districtLabel = (area: District, t: TFunction) => area.names ? localizedName(area.names, t) : t('district.' + area.id)
 function stationPlace(game: GameState, position: Point) {
   const city = getCity(game.cityId)
   const area = districtAt(city, position).area
@@ -37,10 +40,12 @@ function stationPlace(game: GameState, position: Point) {
 const nameCache = new WeakMap<Station[], { growth: GameState['growth']; places: Map<string, ReturnType<typeof stationPlace>> }>()
 
 export function stationNameAt(game: GameState, position: Point, t: TFunction) {
+  if (game.hongKong) return localizedName(hongKongName(position, game.stations), t)
   return t(stationPlace(game, position).key)
 }
 
 export function stationLabel(game: GameState, station: Station, t: TFunction) {
+  if (station.names) return localizedName(station.names, t)
   if (station.name) return station.name
   let cached = nameCache.get(game.stations)
   if (cached?.growth !== game.growth) {

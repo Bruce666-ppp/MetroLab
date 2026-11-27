@@ -1,22 +1,25 @@
 import { developCity, getCity } from './city.ts'
-import { applyOperatingMinute, blankTotals, grantMilestones, INITIAL_BUDGET, netOperating } from './economy.ts'
+import { applyOperatingMinute, blankTotals, grantMilestones, HKD, INITIAL_BUDGET, netOperating } from './economy.ts'
 import { cityCoverage, getDistrictAccess, lineLength, servedStationIds } from './network.ts'
 import type { DistrictAccess } from './network.ts'
 import { DEMAND_INTERVAL, generateDemand, processPassengers } from './passengers.ts'
 import { operateTrains } from './trains.ts'
 import type { GameState, Mode } from './types.ts'
 
-export const SAVE_VERSION = 3
+export const SAVE_VERSION = 4
 export const TICK = 0.25
+
+export const blankOperations = () => ({ lineActivity: {}, od: {}, alternatives: { walk: 0, bus: 0, ferry: 0 } })
 
 export function newGame(mode: Mode, cityId = 'marlow'): GameState {
   const city = getCity(cityId)
   return {
-    version: SAVE_VERSION, cityId: city.id, mode, minute: 365, funds: INITIAL_BUDGET, nextId: 1,
+    version: SAVE_VERSION, cityId: city.id, mode, minute: city.hongKong ? 420 : 365, funds: city.hongKong ? HKD.initial : INITIAL_BUDGET, nextId: 1,
     stations: [], lines: [], trains: [], queues: {}, egress: [],
     growth: Object.fromEntries(city.districts.map((area) => [area.id, Number(area.opens === 1)])),
     carry: {}, districtDemand: {}, stationActivity: {}, today: blankTotals(), lifetime: blankTotals(), history: [],
     hourArrivals: 0, hourBalance: 0, milestones: [], revision: 0,
+    ...(city.hongKong ? { hongKong: blankOperations() } : {}),
   }
 }
 
@@ -31,11 +34,18 @@ export function advanceGame(previous: GameState, minutes: number): GameState {
     stationActivity: structuredClone(previous.stationActivity),
     districtDemand: { ...previous.districtDemand }, today: { ...previous.today }, lifetime: { ...previous.lifetime },
     milestones: previous.milestones.slice(),
+    ...(previous.hongKong ? { hongKong: structuredClone(previous.hongKong) } : {}),
   }
   let access: Record<string, DistrictAccess> | undefined
   let trackLength: number | undefined
   for (let i = 0; i < steps; i++) {
     game.minute += TICK
+    if (game.minute % 1440 === 0 && game.hongKong) {
+      game.hongKong = blankOperations()
+      game.today = blankTotals()
+      game.stationActivity = {}
+      game.districtDemand = {}
+    }
     processPassengers(game)
     operateTrains(game, TICK)
     if (game.minute % 1 !== 0) continue
@@ -56,7 +66,7 @@ export function advanceGame(previous: GameState, minutes: number): GameState {
       game.hourArrivals = game.lifetime.arrived
       game.hourBalance = balance
     }
-    if (game.minute % 1440 === 0) {
+    if (game.minute % 1440 === 0 && !game.hongKong) {
       game.today = blankTotals()
       game.stationActivity = {}
       game.growth = { ...game.growth }

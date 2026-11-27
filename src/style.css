@@ -167,7 +167,7 @@ a { color: inherit; }
   stroke-linejoin: round;
 }
 .district-label.future { opacity: .68; }
-:lang(zh-CN) .district-label { letter-spacing: 1.7px; font-weight: 700; }
+:lang(zh-HK) .district-label { letter-spacing: 1.7px; font-weight: 700; }
 .river-label { fill: #427683; font-size: 15px; font-weight: 580; letter-spacing: 3px; text-transform: uppercase; }
 .river-label.secondary { font-size: 11.5px; fill: #59838e; }
 .station-name { fill: #214944; font-weight: 700; stroke: #fbfbf5; stroke-width: 3px; stroke-linejoin: round; paint-order: stroke; }
@@ -178,7 +178,6 @@ a { color: inherit; }
 .coverage-ring.invalid { fill: #db654d; stroke: #a94436; fill-opacity: .11; }
 .ghost-station { fill: #f6fffa; stroke: #127b63; stroke-width: 2.4; }
 .ghost-station.invalid { stroke: #b65b45; }
-.suggested-ring { fill: #dcfae9; fill-opacity: .75; stroke: #18836e; stroke-dasharray: 4 3; stroke-width: 1.8; }
 .map-layer-control {
   position: absolute;
   top: 19px;
@@ -631,4 +630,48 @@ kbd { font-family: var(--mono); font-size: .76rem; border-radius: 4px; border: 1
   .draw-metrics { gap: 4px; }
   .tool-line .map-navigation { bottom: 189px; }
   .tool-line .map-mapkey { display: none; }
+}
+
+.hong-kong-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.hong-kong-canvas + .city-map-svg { position: relative; }
+.map-sources { position: absolute; z-index: 1; bottom: 4px; right: 61px; display: flex; gap: 8px;
+  padding: 3px 6px; background: #f9fbf2e8; color: #385351; font-size: .64rem; border-radius: 3px; line-height: 1.18; }
+.map-sources a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.map-sources.above-draw { bottom: auto; top: 17px; right: 15px; }
+.method-selector { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .76rem; font-weight: 620; }
+.method-selector select, .fare-form input { min-height: 33px; padding: 5px 7px; border: 1px solid #ccded1;
+  background: #f9fcf4; border-radius: 5px; color: var(--ink); font: inherit; }
+.draw-buttons .method-selector > span { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+.draw-buttons .method-selector select { width: auto; max-width: 100%; margin: 0; }
+.station-method { position: absolute; z-index: 1; top: 56px; left: 13px; border: 1px solid #d1dfd2; border-radius: 5px;
+  padding: 4px 5px 4px 9px; background: #fbfdf2f5; box-shadow: 0 2px 7px #163a3021; }
+.construction-budget { margin: -1px 0 12px; font-size: .79rem; }
+.construction-budget > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 2px;
+  border-bottom: 1px solid var(--line); }
+.construction-budget dt { color: var(--muted); }
+.construction-budget dd { margin: 0; font-weight: 640; white-space: nowrap; }
+.construction-budget .negative dd { color: #aa4537; }
+.network-intro, .station-other-name { margin: 10px 0 0; color: var(--muted); font-size: .87rem; line-height: 1.46; }
+.station-other-name { margin: 4px 0 0; }
+.rename-form.bilingual-rename { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; }
+.rename-form.bilingual-rename input { min-width: 0; }
+.section-methods { margin: 11px 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px; font-size: .85rem; }
+.section-methods summary { cursor: pointer; font-weight: 650; color: var(--ink); }
+.section-methods .method-selector { justify-content: space-between; margin: 6px 0 2px; }
+.section-methods .select-field { margin-top: 8px; }
+.fare-form { display: flex; align-items: end; gap: 7px; margin: 9px 0; }
+.fare-form label { display: grid; gap: 4px; font-size: .78rem; color: var(--muted); }
+.fare-form input { width: 100%; min-width: 0; min-height: 39px; }
+.fare-form .action-button { flex: 0 0 auto; width: auto; }
+.operating-overview { margin-top: 12px; }
+.demand-period { border-left: 1px solid #d7e1d6; padding-left: 10px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.boot-status { margin: 0; min-height: 100vh; display: grid; place-items: center; font-size: 1.1rem; }
+.layer-caption { display: block; color: #526658; font-size: .64rem; margin: -1px 0 0 4px; }
+
+@media (max-width: 780px) {
+  .demand-period { display: none; }
+  .draw-controls-heading > .draw-buttons { flex-wrap: wrap; margin-left: auto; justify-content: flex-end; }
+  .draw-buttons .method-selector select { padding: 2px 4px; font-size: .7rem; }
+  .map-sources { right: 51px; gap: 4px; }
+  .map-sources.above-draw { top: 51px; right: 6px; }
 }

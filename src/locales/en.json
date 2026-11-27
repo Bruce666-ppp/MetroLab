@@ -11,8 +11,9 @@
     "help": "Help & shortcuts",
     "language": "Language",
     "english": "English",
-    "chinese": "简中",
-    "board": "Planning workspace"
+    "chinese": "繁中",
+    "board": "Planning workspace",
+    "languageCode": "en"
   },
   "common": {
     "back": "Back",
@@ -65,7 +66,7 @@
     "lastHour": "Last hour"
   },
   "map": {
-    "name": "Interactive map of Marlow",
+    "name": "MetroLab city map",
     "layers": "Map layer",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
@@ -84,13 +85,15 @@
     "showPlan": "Show plan view"
   },
   "layer": {
-    "standard": "Standard map",
+    "standard": "City map",
     "population": "Population density",
     "demand": "Travel demand",
     "coverage": "Station coverage",
     "congestion": "Network congestion",
     "accessibility": "Transit accessibility",
-    "engineering": "Track engineering"
+    "engineering": "Track engineering",
+    "employment": "Employment density",
+    "flow": "Passenger flow"
   },
   "tool": {
     "heading": "Tools",
@@ -102,17 +105,16 @@
     "selectHint": "Select a district, station, line or moving train.",
     "buildHint": "Build on land or click a track to insert a station.",
     "lineHint": "Click the map to place stations and connect them.",
-    "cannotUndo": "Undo is available for edits made while the clock is paused.",
-    "guideSite": "Suggested station locations"
+    "cannotUndo": "Undo is available for edits made while the clock is paused."
   },
   "menu": {
     "eyebrow": "New game",
     "title": "Plan a metro for Marlow",
     "intro": "Connect neighborhoods across the Alder River and keep the city moving.",
-    "career": "Career",
+    "career": "Career mode",
     "careerDetail": "Limited budget · City milestones",
-    "sandbox": "Sandbox",
-    "sandboxDetail": "Unlimited funding · Free planning",
+    "sandbox": "Sandbox mode",
+    "sandboxDetail": "Build with an unlimited construction budget and track operating costs.",
     "continue": "Continue game",
     "saved": "Saved {{date}}",
     "replaceTitle": "Start a new game?",
@@ -128,9 +130,9 @@
   },
   "panel": {
     "network": "Network",
-    "analytics": "Analysis",
+    "analytics": "Analytics",
     "networkTitle": "Transit network",
-    "analysisTitle": "Operations analysis",
+    "analysisTitle": "Operations dashboard",
     "overview": "Overview",
     "totalStops": "{{count}} stations",
     "totalLines": "{{count}} lines",
@@ -236,8 +238,8 @@
     "removeBody": "Trains assigned to the line will be sold. Stations remain available for other services.",
     "remove": "Remove line",
     "topologyNotice": "Reordering stops or changing loop service restarts affected trains.",
-    "loopName": "{{from}} Loop",
-    "corridorName": "{{from}}–{{to}}"
+    "loopName": "{{from}} – {{to}} Loop",
+    "corridorName": "{{from}} – {{to}}"
   },
   "train": {
     "title": "Train",
@@ -305,7 +307,7 @@
     "balance": "Balance",
     "service": "Service performance",
     "finance": "Operating ledger",
-    "fares": "Fare income",
+    "fares": "Fare revenue",
     "subsidy": "City subsidy",
     "expenses": "Operating expenses",
     "capital": "Construction & purchases",
@@ -372,7 +374,14 @@
     "curve": "This alignment has an infeasible turn. Increase the turning space or adjust the track control points.",
     "controlPoint": "Place the track control point within the city limits.",
     "noTrack": "Choose a point on the track.",
-    "differentTrack": "Choose lines that share this point on the alignment."
+    "differentTrack": "Choose lines that share this point on the alignment.",
+    "outsideArea": "This section leaves the playable area.",
+    "surfaceWater": "This construction method cannot cross open water.",
+    "surfaceObstruction": "Building footprints obstruct this part of the alignment.",
+    "surfaceGrade": "The measured terrain is too steep for this method.",
+    "invalidMethod": "Choose a supported construction method.",
+    "invalidFare": "Enter a whole-dollar fare from HKD 0 to HKD 48.",
+    "openLoop": "Close the track ends before making a circular route."
   },
   "notice": {
     "built": "Station built.",
@@ -389,7 +398,7 @@
     "mode": "Drawing mode",
     "create": "Create new line",
     "extend": "Extend {{line}}",
-    "finish": "Finish construction",
+    "finish": "Build alignment",
     "length": "Track length",
     "radius": "Minimum curve radius",
     "design": "Design speed",
@@ -453,5 +462,87 @@
     "hillviewRoad": "Hillview Road",
     "quarrySquare": "Quarry Square",
     "meadowCourt": "Meadow Court"
+  },
+  "hk": {
+    "city": "Hong Kong",
+    "cityOverview": "City overview",
+    "edition": "MetroLab 2.0",
+    "period": { "morning": "Morning peak", "offPeak": "Off-peak", "evening": "Evening peak", "night": "Night" },
+    "menuIntro": "Build and run your own railway across Hong Kong Island, Kowloon and Victoria Harbour.",
+    "careerDetail": "Plan and run a railway with HKD 38 billion in starting capital.",
+    "blankNetwork": "The city is ready to survey. Draw an alignment or place a station to start your network.",
+    "buildMethod": "Construction method",
+    "method": {
+      "underground": "Underground",
+      "elevated": "Elevated",
+      "atGrade": "At grade"
+    },
+    "addDraftStation": "Add a station to the plan",
+    "placeDraftStation": "Click to place a station.",
+    "drawStart": "Click the map to start an alignment. Shift-click to place a station.",
+    "drawNext": "Click to extend the alignment. Shift-click or use the station button to add stops.",
+    "stationHint": "Click on land to place a station, or select a track to insert a stop.",
+    "confirmConstruction": "Confirm construction",
+    "confirmCost": "Construction costs {{cost}}. Remaining budget {{balance}}.",
+    "siteWorks": "Site and civil works",
+    "harbourPremium": "Marine tunnel supplement",
+    "stationWorks": "Station works",
+    "interchangeWorks": "Interchange works",
+    "remainingFunds": "Budget after confirmation",
+    "englishName": "English station name",
+    "chineseName": "Chinese station name",
+    "transferLines": "Interchange lines",
+    "transfers": "Transfers today",
+    "suspended": "Service suspended",
+    "suspendService": "Suspend service",
+    "resumeService": "Resume service",
+    "baseFare": "Base fare per line · HKD",
+    "linePerformance": "Daily operating figures",
+    "lineCapital": "Construction investment",
+    "dailyBoardings": "Boardings today",
+    "peakBoardings": "Peak-hour boardings",
+    "peakLoad": "Highest peak-hour load",
+    "averageWait": "Estimated average wait",
+    "removeSection": "Remove track section",
+    "removeSectionBody": "The selected section will be removed. Services and passengers on the affected line will be reset.",
+    "trackSection": "Track section",
+    "startApproach": "Unserved track at start",
+    "endApproach": "Unserved track at end",
+    "sectionMethods": "Construction by section",
+    "sectionNumber": "Section {{number}}",
+    "mixed": "Mixed construction",
+    "unopened": "Add at least two stations to run trains on this alignment.",
+    "editControls": "Click the alignment to add a control point, or select a diamond to move or remove it.",
+    "censusArea": "Census area {{code}}",
+    "populationDensity": "Population density",
+    "employmentDensity": "Employment density",
+    "perSquareKm": "{{value}} / km²",
+    "departureEstimate": "Estimated departures / 5 min",
+    "topDestinations": "Main destinations · estimated",
+    "jobsCoverage": "Jobs covered",
+    "schoolPlacesEstimate": "Estimated school capacity",
+    "daytimePopulation": "People present at 13:00 · estimated",
+    "nightPopulation": "People present at 23:00 · estimated",
+    "totalCapital": "Total capital investment",
+    "railShare": "Demand served by rail",
+    "networkLength": "Network length",
+    "operatingLines": "Operating lines",
+    "transferStations": "Interchange stations",
+    "alternatives": "Trips by other modes",
+    "mode": {
+      "walk": "Walking",
+      "bus": "Bus and road travel",
+      "ferry": "Ferry"
+    },
+    "helpIntro": "Survey Hong Kong Island and Kowloon. Draw an alignment from any point in the buildable area, then add stations where you choose.",
+    "helpEngineering": "Each ordinary click sets a control point. Shift-click adds a station. Underground alignments can pass under Victoria Harbour. The estimate lists site work, track, station and tunnel costs.",
+    "attribution": "© HKSAR Government · CSDI",
+    "legend": {
+      "population": "Residents per 250 m cell",
+      "employment": "Jobs per 250 m cell",
+      "demand": "Estimated departures per 5 min",
+      "coverage": "Walkable station catchments",
+      "flow": "Boardings and station activity today"
+    }
   }
 }

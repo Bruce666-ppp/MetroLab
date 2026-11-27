@@ -1,4 +1,5 @@
 import type { City, Point } from './types.ts'
+import { surfaceAt } from './hongKong.ts'
 
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 export const distance = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y)
@@ -17,6 +18,7 @@ export function octilinear(a: Point, b: Point): Point[] {
 }
 
 export function isWater(city: City, point: Point, margin = 0) {
+  if (city.hongKong) return surfaceAt(point) === 'water'
   const river = city.river(point.y)
   return Math.abs(point.x - river.center) <= river.halfWidth + margin
 }

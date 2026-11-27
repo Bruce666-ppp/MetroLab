@@ -10,7 +10,7 @@ export const zoneColors: Record<Zone, string> = {
 }
 
 export const layerColors: Record<Layer, string> = {
-  standard: '#087e69', population: '#9f6eb7', demand: '#d68043',
+  standard: '#087e69', population: '#9157ab', employment: '#337dba', demand: '#d68043', flow: '#326d92',
   coverage: '#258b78', congestion: '#cc5c51', accessibility: '#4279c4', engineering: '#1a7854',
 }
 

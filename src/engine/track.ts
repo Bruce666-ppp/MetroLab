@@ -1,5 +1,6 @@
 import { clamp, distance, interpolate } from './geometry.ts'
-import type { Direction, Point, TrackPiece, TrackSection } from './types.ts'
+import { HKD } from './hongKongConfig.ts'
+import type { Direction, Line, Point, TrackPiece, TrackSection } from './types.ts'
 
 export const ENGINEERING = Object.freeze({
   metersPerUnit: 10,
@@ -57,7 +58,7 @@ function arcFromTangent(from: Point, to: Point, tangent: Point): TrackPiece | un
 export function reversePiece(piece: TrackPiece): TrackPiece {
   return piece.kind === 'arc'
     ? { ...piece, from: piece.to, to: piece.from, sweep: -piece.sweep }
-    : trackStraight(piece.to, piece.from)
+    : { ...piece, from: piece.to, to: piece.from }
 }
 
 export function reverseSection(section: TrackSection): TrackSection {
@@ -103,6 +104,7 @@ export function pieceLength(piece: TrackPiece) {
 }
 
 export const trackLength = (pieces: TrackPiece[]) => pieces.reduce((length, piece) => length + pieceLength(piece), 0)
+export const allTrack = (line: Line) => [line.openEnds?.head, ...line.track, line.openEnds?.tail].filter((entry): entry is TrackSection => Boolean(entry))
 
 export function pointOnPiece(piece: TrackPiece, fraction: number) {
   const t = clamp(fraction, 0, 1)
@@ -167,8 +169,8 @@ export function splitTrack(pieces: TrackPiece[], offset: number) {
         head.push({ ...piece, to: split, sweep: piece.sweep * fraction })
         tail.push({ ...piece, from: split, sweep: piece.sweep * (1 - fraction) })
       } else {
-        head.push(trackStraight(piece.from, split))
-        tail.push(trackStraight(split, piece.to))
+        head.push({ ...piece, to: split })
+        tail.push({ ...piece, from: split })
       }
     }
     remaining -= length
@@ -228,7 +230,9 @@ function buildProfile(section: TrackSection, speed: number, direction: Direction
   let offset = 0
   for (const piece of pieces) {
     const distance = pieceLength(piece)
-    const limit = Math.min(speed, kmhToUnitsPerMinute(curveSpeedKmh(piece.kind === 'arc' ? unitsToMeters(piece.radius) : null)))
+    const method = piece.method ?? section.method
+    const limit = Math.min(speed, kmhToUnitsPerMinute(curveSpeedKmh(piece.kind === 'arc' ? unitsToMeters(piece.radius) : null)),
+      method ? kmhToUnitsPerMinute(HKD.methods[method].speedKmh) : Infinity)
     const steps = Math.max(2, Math.ceil(distance / 8))
     const previous = nodes.at(-1)!
     previous.velocity = Math.min(previous.velocity, limit)

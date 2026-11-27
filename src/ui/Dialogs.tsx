@@ -44,17 +44,17 @@ export function SettingsDialog({ settings, canSave, canLoad, language, hints, sa
   </Dialog>
 }
 
-export function HelpDialog({ close }: { close: () => void }) {
+export function HelpDialog({ close, hongKong }: { close: () => void; hongKong: boolean }) {
   const { t } = useTranslation()
   const shortcuts = [
     [t('help.select'), 'V'], [t('help.station'), 'S'], [t('help.line'), 'L'],
     [t('help.pause'), 'Space'], [t('help.undo'), 'Ctrl / ⌘ + Z'],
     [t('help.cancel'), 'Esc'], [t('help.navigate'), t('help.navigateKeys')],
-    [t('help.finish'), 'Enter'], [t('help.control'), 'Shift + click'],
+    [t('help.finish'), 'Enter'], [t(hongKong ? 'hk.addDraftStation' : 'help.control'), 'Shift + click'],
   ]
   return <Dialog title={t('help.title')} close={close}>
-    <p className="dialog-copy">{t('help.intro')}</p>
-    <h3>{t('help.engineering')}</h3><p className="dialog-copy">{t('help.engineeringInfo')}</p>
+    <p className="dialog-copy">{t(hongKong ? 'hk.helpIntro' : 'help.intro')}</p>
+    <h3>{t('help.engineering')}</h3><p className="dialog-copy">{t(hongKong ? 'hk.helpEngineering' : 'help.engineeringInfo')}</p>
     <dl className="shortcut-list">{shortcuts.map(([label, key]) => <div key={key}><dt>{label}</dt><dd><kbd>{key}</kbd></dd></div>)}</dl>
     <h3>{t('help.transfer')}</h3><p className="dialog-copy">{t('help.transferInfo')}</p>
     <h3>{t('help.accessibility')}</h3><p className="dialog-copy">{t('help.accessibilityInfo')}</p>

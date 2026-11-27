@@ -1,6 +1,7 @@
 import { cityscape, districtActivity } from './cityscape.ts'
 import { clamp, distance, isWater } from './geometry.ts'
 import { districtPoint, districtScore } from './geography.ts'
+import { HONG_KONG, hongKong, hongKongDistricts, zoneAt } from './hongKong.ts'
 import type { City, District, GameState, Point, Zone } from './types.ts'
 
 const district = (
@@ -62,7 +63,11 @@ for (const area of marlow.districts) {
     }))
 }
 
-const cities: Record<string, City> = { [marlow.id]: marlow }
+const cities: Record<string, City> = {
+  [marlow.id]: marlow,
+  [HONG_KONG]: { id: HONG_KONG, width: hongKong.width, height: hongKong.height, river: () => ({ center: -Infinity, halfWidth: 0 }),
+    bridges: [], districts: hongKongDistricts, tripSamples: new Map(), hongKong },
+}
 export const citiesList = Object.values(cities)
 
 export function getCity(id: string) {
@@ -70,6 +75,12 @@ export function getCity(id: string) {
 }
 
 export function districtAt(city: City, point: Point) {
+  if (city.hongKong) {
+    const district = zoneAt(point)
+    const area = district && city.districts.find((entry) => entry.id === district.id)
+    if (area) return { area, score: 0 }
+    return { area: city.districts.reduce((best, entry) => distance(point, entry.center) < distance(point, best.center) ? entry : best), score: Infinity }
+  }
   let nearest = city.districts[0]
   let best = Infinity
   for (const area of city.districts) {
@@ -95,10 +106,13 @@ export function jobsOf(area: District, game: GameState) {
 }
 
 export function activityOf(area: District, game: GameState) {
+  const local = getCity(game.cityId).hongKong?.zones.find((zone) => zone.id === area.id)
+  if (local) return { residents: local.residents, jobs: local.jobs, visits: local.shops + local.health + local.leisure, students: local.students }
   return districtActivity(getCity(game.cityId), area.id, game.growth[area.id] ?? 0)
 }
 
 export function developCity(city: City, game: GameState, accessibility: Record<string, number>) {
+  if (city.hongKong) return
   const day = dayNumber(game.minute)
   for (const area of city.districts) {
     if (day < area.opens) continue

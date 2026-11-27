@@ -1,4 +1,5 @@
 import { sectionAt } from './alignment.ts'
+import { HKD } from './economy.ts'
 import { clamp } from './geometry.ts'
 import { DWELL, nextStop, trainLoad, waitingAt, stationCapacity } from './network.ts'
 import type { AccessLink } from './network.ts'
@@ -8,6 +9,7 @@ import type { Direction, GameState, Leg } from './types.ts'
 interface Edge extends Leg {
   minutes: number
   wait: number
+  fare: number
 }
 
 interface Node {
@@ -16,6 +18,7 @@ interface Node {
   lineId: string
   direction: Direction
   cost: number
+  elapsed: number
   arrival?: Edge
   previous?: Node
   walk: number
@@ -31,6 +34,8 @@ export interface Journey {
   minutes: number
   access: number
   egress: number
+  cost: number
+  tickets: { lineId: string; fare: number }[]
 }
 
 export function makeRoutingNetwork(game: GameState): RoutingNetwork {
@@ -38,7 +43,7 @@ export function makeRoutingNetwork(game: GameState): RoutingNetwork {
   const stationById = new Map(game.stations.map((station) => [station.id, station]))
   for (const line of game.lines) {
     const fleet = game.trains.filter((train) => train.lineId === line.id && train.active)
-    if (!fleet.length) continue
+    if (!fleet.length || line.suspended) continue
     const load = fleet.reduce((total, train) => total + trainLoad(train) / train.capacity, 0) / fleet.length
     const segments: Edge[] = []
     const directions: Direction[] = line.circular ? [1] : [1, -1]
@@ -50,7 +55,8 @@ export function makeRoutingNetwork(game: GameState): RoutingNetwork {
         const to = stationById.get(line.stops[next])!
         const section = sectionAt(line, i, direction)!
         const minutes = fleet.reduce((total, train) => total + trackProfile(section, train.speed, direction).duration, 0) / fleet.length + DWELL
-        segments.push({ lineId: line.id, board: from.id, alight: to.id, direction, minutes, wait: 0 })
+        segments.push({ lineId: line.id, board: from.id, alight: to.id, direction, minutes, wait: 0,
+          fare: game.hongKong ? line.fare ?? HKD.fare : 0 })
       }
     }
     const cycle = segments.reduce((sum, segment) => sum + segment.minutes, 0)
@@ -112,7 +118,8 @@ export function routesFrom(network: RoutingNetwork, origins: AccessLink[]) {
     frontier.push(node)
   }
   for (const access of origins) {
-    add({ station: access.stationId, origin: access.stationId, lineId: '', direction: 1, walk: access.minutes, cost: access.minutes })
+    add({ station: access.stationId, origin: access.stationId, lineId: '', direction: 1,
+      walk: access.minutes, cost: access.minutes, elapsed: access.minutes })
   }
   for (let node = frontier.take(); node; node = frontier.take()) {
     if (node.cost !== best.get(key(node))) continue
@@ -125,9 +132,11 @@ export function routesFrom(network: RoutingNetwork, origins: AccessLink[]) {
       if (sameLine && node.direction !== edge.direction) continue
       const transfer = Boolean(node.lineId && !sameLine)
       if (transfer && !network.transfers.has(node.station)) continue
-      const cost = node.cost + edge.minutes + (sameLine ? 0 : edge.wait) + (transfer ? 4 : 0)
+      const elapsed = node.elapsed + edge.minutes + (sameLine ? 0 : edge.wait) + (transfer ? 4 : 0)
+      const cost = node.cost + elapsed - node.elapsed + (sameLine ? 0 : edge.fare * 0.52)
       if (cost <= 145) {
-        add({ station: edge.alight, origin: node.origin, lineId: edge.lineId, direction: edge.direction, cost, arrival: edge, previous: node, walk: node.walk })
+        add({ station: edge.alight, origin: node.origin, lineId: edge.lineId, direction: edge.direction, cost, elapsed,
+          arrival: edge, previous: node, walk: node.walk })
       }
     }
   }
@@ -148,14 +157,16 @@ export function routesFrom(network: RoutingNetwork, origins: AccessLink[]) {
     for (let node: Node | undefined = destination; node?.arrival; node = node.previous) edges.push(node.arrival)
     edges.reverse()
     const legs: Leg[] = []
+    const tickets: Journey['tickets'] = []
     for (const edge of edges) {
       const last = legs.at(-1)
       if (last?.lineId === edge.lineId && last.direction === edge.direction) {
         last.alight = edge.alight
       } else {
         legs.push({ board: edge.board, alight: edge.alight, lineId: edge.lineId, direction: edge.direction })
+        tickets.push({ lineId: edge.lineId, fare: edge.fare })
       }
     }
-    return { legs, minutes, access: destination.walk, egress }
+    return { legs, minutes: destination.elapsed + egress, access: destination.walk, egress, cost: minutes, tickets }
   }
 }

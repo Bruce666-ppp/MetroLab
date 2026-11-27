@@ -1,6 +1,7 @@
 import { activityOf, isWeekend, minuteOfDay, populationOf } from './city.ts'
-import { FARE, post } from './economy.ts'
+import { FARE, lineActivity, post } from './economy.ts'
 import { clamp, distance } from './geometry.ts'
+import { generateHongKongDemand, retainAlternative } from './hongKongDemand.ts'
 import { stationCapacity } from './network.ts'
 import type { DistrictAccess } from './network.ts'
 import { makeRoutingNetwork, routesFrom } from './routing.ts'
@@ -36,7 +37,11 @@ export type ActivityCount = keyof GameState['stationActivity'][string]
 export function trackStationActivity(game: GameState, id: string, activity: ActivityCount, count: number) {
   if (!count) return
   const station = game.stationActivity[id] ??= { requested: 0, boarded: 0, alighted: 0 }
-  station[activity] += count
+  station[activity] = (station[activity] ?? 0) + count
+}
+
+export function abandonTrip(game: GameState, group: PassengerGroup, count = group.count) {
+  if (count) retainAlternative(game, count, group.alternative)
 }
 
 function attraction(game: GameState, area: District, purpose: Purpose) {
@@ -65,11 +70,12 @@ export function admitGroup(game: GameState, stationId: string, group: PassengerG
   const reserved = queue.reduce((sum, entry) => sum + entry.count, 0)
   const accepted = station ? clamp(group.count, 0, Math.max(0, stationCapacity(station) - reserved)) : 0
   if (accepted) queue.push({ ...group, count: accepted })
-  post(game, 'unmet', group.count - accepted)
+  abandonTrip(game, group, group.count - accepted)
   return accepted
 }
 
 export function generateDemand(city: City, game: GameState, access: Record<string, DistrictAccess>) {
+  if (game.hongKong) { generateHongKongDemand(game, access, admitGroup); return }
   const network = makeRoutingNetwork(game)
   const districts = city.districts.filter((district) => game.growth[district.id])
   for (const origin of districts) {
@@ -114,14 +120,18 @@ export function processPassengers(game: GameState) {
   for (const [stationId, queue] of Object.entries(game.queues)) {
     game.queues[stationId] = queue.filter((group) => {
       if (game.minute - group.readyAt <= MAX_WAIT && game.minute - group.started <= MAX_JOURNEY) return true
-      post(game, 'unmet', group.count)
+      abandonTrip(game, group)
       return false
     })
   }
   game.egress = game.egress.filter((group) => {
     if (group.readyAt > game.minute) return true
     const travelTime = game.minute - group.started
-    const fare = group.count * FARE
+    const fare = group.count * (game.hongKong ? (group.tickets ?? []).reduce((total, ticket) => total + ticket.fare, 0) : FARE)
+    for (const ticket of group.tickets ?? []) {
+      const activity = lineActivity(game, ticket.lineId)
+      if (activity) activity.fares += group.count * ticket.fare
+    }
     game.funds += fare
     post(game, 'fares', fare)
     post(game, 'arrived', group.count)
@@ -134,7 +144,7 @@ export function processPassengers(game: GameState) {
 export function withdrawLineTrips(game: GameState, affected: Set<string>) {
   const keep = (group: PassengerGroup) => {
     if (!group.legs.some((leg) => affected.has(leg.lineId))) return true
-    post(game, 'unmet', group.count)
+    abandonTrip(game, group)
     return false
   }
   for (const [id, queue] of Object.entries(game.queues)) game.queues[id] = queue.filter(keep)

@@ -1,15 +1,19 @@
 import { districtAt, jobsOf, populationOf } from './city.ts'
-import { stationPrice } from './economy.ts'
+import { stationGroundError, stationPrice } from './economy.ts'
+import type { EngineeringError } from './economy.ts'
 import { distance, isWater, walkDistance } from './geometry.ts'
+import { surfaceAt, walkCells, walkingMinutes, walkRadius } from './hongKong.ts'
 import { ENGINEERING, kmhToUnitsPerMinute, trackLength } from './track.ts'
-import type { City, Direction, GameState, Line, Point, Station } from './types.ts'
+import type { City, Direction, GameState, Line, Point, Station, TrackMethod } from './types.ts'
 
 export const LINE_COLORS = ['#2864d4', '#07865e', '#e47825', '#a552b7', '#ce4450', '#00879d', '#a16e14', '#4053a6']
 export const TRAIN_SPEED = kmhToUnitsPerMinute(ENGINEERING.designSpeedKmh)
 export const DWELL = 0.75
 export const MIN_STATION_GAP = 42
 export const stationRadius = (level: Station['level']) => 147 + 27 * (level - 1)
-export const stationCapacity = (station: Station) => 120 + (station.level - 1) * 90 + (station.interchange ? 85 : 0)
+export const stationCapacity = (station: Station) => station.method ? 800 + (station.level - 1) * 650 + (station.interchange ? 850 : 0) :
+  120 + (station.level - 1) * 90 + (station.interchange ? 85 : 0)
+export const stationGap = (city: City) => city.hongKong ? 2.4 : MIN_STATION_GAP
 
 export function pairsOf(stops: string[], circular: boolean): [string, string][] {
   const pairs: [string, string][] = stops.slice(1).map((stop, index) => [stops[index], stop])
@@ -25,32 +29,43 @@ export function nextStop(line: Line, at: number, direction: Direction) {
 }
 
 export function lineLength(line: Line) {
-  return line.track.reduce((total, section) => total + trackLength(section.pieces), 0)
+  return line.track.reduce((total, section) => total + trackLength(section.pieces), 0) +
+    trackLength(line.openEnds?.head?.pieces ?? []) + trackLength(line.openEnds?.tail?.pieces ?? [])
 }
 
-export function stationPreview(city: City, game: GameState, position: Point, ignore?: string) {
+export function stationPreview(city: City, game: GameState, position: Point, ignore?: string, method?: TrackMethod) {
   const { area } = districtAt(city, position)
   const level = game.stations.find((station) => station.id === ignore)?.level ?? 1
-  const radius = stationRadius(level)
+  const radius = city.hongKong ? walkRadius(level) : stationRadius(level)
   let population = 0
   let jobs = 0
-  for (const district of city.districts) {
-    const samples = city.tripSamples.get(district.id) ?? []
-    const covered = samples.filter((sample) => walkDistance(city, position, sample) <= radius).length
-    const share = samples.length ? covered / samples.length : 0
-    population += Math.round(populationOf(district, game) * share)
-    jobs += Math.round(jobsOf(district, game) * share)
+  if (city.hongKong) {
+    for (const index of walkCells(position, level).keys()) {
+      const cell = city.hongKong.cells[index]
+      population += cell.residents
+      jobs += cell.jobs
+    }
+  } else {
+    for (const district of city.districts) {
+      const samples = city.tripSamples.get(district.id) ?? []
+      const covered = samples.filter((sample) => walkDistance(city, position, sample) <= radius).length
+      const share = samples.length ? covered / samples.length : 0
+      population += Math.round(populationOf(district, game) * share)
+      jobs += Math.round(jobsOf(district, game) * share)
+    }
   }
-  let error: 'outOfBounds' | 'water' | 'tooClose' | undefined
+  let error: 'outOfBounds' | 'water' | 'tooClose' | EngineeringError | undefined
   if (!Number.isFinite(position.x) || !Number.isFinite(position.y) ||
-    position.x < 14 || position.x > city.width - 14 || position.y < 14 || position.y > city.height - 14) {
+    position.x < 0 || position.x > city.width || position.y < 0 || position.y > city.height ||
+    (city.hongKong ? surfaceAt(position) === 'outside' : position.x < 14 || position.x > city.width - 14 || position.y < 14 || position.y > city.height - 14)) {
     error = 'outOfBounds'
   } else if (isWater(city, position, 6)) {
     error = 'water'
-  } else if (game.stations.some((station) => station.id !== ignore && distance(station.position, position) < MIN_STATION_GAP)) {
+  } else if (game.stations.some((station) => station.id !== ignore && distance(station.position, position) < stationGap(city))) {
     error = 'tooClose'
   }
-  return { district: area.id, radius, population, jobs, cost: stationPrice(city, position, jobs), error }
+  if (!error && city.hongKong && method) error = stationGroundError(position, method)
+  return { district: area.id, radius, population, jobs, cost: stationPrice(city, position, jobs, method), error }
 }
 
 export interface AccessLink {
@@ -61,14 +76,52 @@ export interface AccessLink {
 export interface DistrictAccess {
   fraction: number
   links: AccessLink[]
+  jobs?: number
+  choices?: { stationId: string; minutes: number[]; shares: number[] }[]
 }
 
 export function servedStationIds(game: GameState) {
   const activeLines = new Set(game.trains.filter((train) => train.active).map((train) => train.lineId))
-  return new Set(game.lines.filter((line) => activeLines.has(line.id)).flatMap((line) => line.stops))
+  return new Set(game.lines.filter((line) => activeLines.has(line.id) && !line.suspended).flatMap((line) => line.stops))
+}
+
+export const cellActivities = (cell: NonNullable<City['hongKong']>['cells'][number]) =>
+  [cell.residents, cell.jobs, cell.students, cell.shops, cell.health, cell.leisure]
+
+export function coveredCells(stations: Station[]) {
+  const reached = new Map<number, { id: string; length: number }>()
+  for (const station of stations) for (const [cell, length] of walkCells(station.position, station.level)) {
+    if (length < (reached.get(cell)?.length ?? Infinity)) reached.set(cell, { id: station.id, length })
+  }
+  return reached
+}
+
+function hongKongAccess(city: NonNullable<City['hongKong']>, stations: Station[]): Record<string, DistrictAccess> {
+  const allocations = city.zones.map(() => new Map<string, { units: number[]; weights: number[] }>())
+  for (const [index, hit] of coveredCells(stations)) {
+    const cell = city.cells[index]
+    const zone = allocations[cell.zone]
+    const byStation = zone.get(hit.id) ?? { units: new Array<number>(6).fill(0), weights: new Array<number>(6).fill(0) }
+    cellActivities(cell).forEach((weight, i) => {
+      byStation.units[i] += weight * hit.length
+      byStation.weights[i] += weight
+    })
+    zone.set(hit.id, byStation)
+  }
+  return Object.fromEntries(city.zones.map((zone, i) => {
+    const totals = [zone.residents, zone.jobs, zone.students, zone.shops, zone.health, zone.leisure]
+    const choices = Array.from(allocations[i], ([stationId, { units, weights }]) => ({ stationId,
+      minutes: units.map((length, i) => walkingMinutes(weights[i] ? length / weights[i] : 0)),
+      shares: weights.map((weight, i) => totals[i] ? weight / totals[i] : 0),
+    }))
+    const covered = (i: number) => Math.min(1, choices.reduce((sum, item) => sum + item.shares[i], 0))
+    const links = choices.map((item) => ({ stationId: item.stationId, minutes: item.minutes[0] || item.minutes[1] }))
+    return [zone.id, { fraction: covered(0), jobs: covered(1), choices, links }]
+  }))
 }
 
 export function getDistrictAccess(city: City, stations: Station[]): Record<string, DistrictAccess> {
+  if (city.hongKong) return hongKongAccess(city.hongKong, stations)
   return Object.fromEntries(city.districts.map((district) => {
     const samples = city.tripSamples.get(district.id) ?? []
     const walks = new Map<string, { distance: number; count: number }>()
@@ -99,12 +152,18 @@ export function getDistrictAccess(city: City, stations: Station[]): Record<strin
 export function cityCoverage(city: City, game: GameState, access: Record<string, DistrictAccess>) {
   let population = 0
   let served = 0
+  let jobs = 0
+  let servedJobs = 0
   for (const district of city.districts) {
     const residents = populationOf(district, game)
     population += residents
     served += residents * (access[district.id]?.fraction ?? 0)
+    if (city.hongKong) {
+      jobs += district.jobs
+      servedJobs += district.jobs * (access[district.id]?.jobs ?? 0)
+    }
   }
-  return { population, coverage: population ? served / population : 0 }
+  return { population, coverage: population ? served / population : 0, jobs, jobCoverage: jobs ? servedJobs / jobs : 0 }
 }
 
 export function waitingAt(game: GameState, stationId: string) {

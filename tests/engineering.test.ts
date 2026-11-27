@@ -223,6 +223,7 @@ test('the city model generates mixed uses, predicts school trips, names stations
   const university = city.districts.find((area) => area.id === 'university')!
   const oldTown = city.districts.find((area) => area.id === 'oldTown')!
   const centralActivity = activityOf(downtown, game)
+  assert.ok('use' in centralActivity)
   assert.ok(centralActivity.use.office > 0 && centralActivity.use.residential > 0 && centralActivity.use.retail > 0)
   assert.ok(centralActivity.jobs > activityOf(oldTown, game).jobs)
   assert.ok(activityOf(university, game).students > 5000)

@@ -1,10 +1,14 @@
 import { distance, octilinear } from './geometry.ts'
 import { pairsOf, pairKey } from './network.ts'
-import { biarc, minimumRadius, nearestOnTrack, pieceTangent, radiusStatus, reverseSection, stationTangent,
+import { allTrack, biarc, minimumRadius, nearestOnTrack, pieceTangent, radiusStatus, reverseSection, stationTangent,
   tangentsAgree, trackLength, trackStraight } from './track.ts'
 import type { Direction, Line, LineDesign, Point, Station, TrackSection } from './types.ts'
 
 export const sectionKey = (from: string, to: string) => from + '|' + to
+export const headAnchor = '@head'
+export const tailAnchor = '@tail'
+export const openEndOf = (section: TrackSection) => section.from === headAnchor ? 'head' : section.to === tailAnchor ? 'tail' : undefined
+export { allTrack } from './track.ts'
 
 export function legacyTrack(stations: Station[], line: Pick<Line, 'stops' | 'circular'>) {
   const positions = new Map(stations.map((station) => [station.id, station.position]))
@@ -77,9 +81,10 @@ export function alignTrack(positions: Map<string, Point>, design: LineDesign, ex
 
 export function trackHits(lines: Line[], point: Point, tolerance: number) {
   return lines.flatMap((line) => {
-    const hits = line.track.flatMap((section, index) => {
+    const hits = allTrack(line).flatMap((section) => {
+      const index = line.track.indexOf(section)
       const hit = nearestOnTrack(section.pieces, point)
-      return hit && hit.distance <= tolerance ? [{ ...hit, lineId: line.id, index, section }] : []
+      return hit && hit.distance <= tolerance ? [{ ...hit, lineId: line.id, index, section, end: openEndOf(section) }] : []
     })
     hits.sort((a, b) => a.distance - b.distance)
     return hits.length ? [hits[0]] : []

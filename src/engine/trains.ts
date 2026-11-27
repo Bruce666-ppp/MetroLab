@@ -1,6 +1,7 @@
 import { sectionAt } from './alignment.ts'
 import { DWELL, nextStop, TRAIN_SPEED, trainLoad } from './network.ts'
-import { post } from './economy.ts'
+import { HKD, lineActivity, post, postExpense } from './economy.ts'
+import { isPeak } from './hongKongDemand.ts'
 import { admitGroup, trackStationActivity } from './passengers.ts'
 import { motionAt, pointOnTrack, timeAtDistance, trackProfile } from './track.ts'
 import type { GameState, Line, PassengerGroup, Station, TrackSection, Train } from './types.ts'
@@ -8,10 +9,10 @@ import type { GameState, Line, PassengerGroup, Station, TrackSection, Train } fr
 export const CAPACITY = 96
 const OPERATING_COST = 85
 
-export function makeTrain(lineId: string, number: number): Train {
+export function makeTrain(lineId: string, number: number, hongKong = false): Train {
   return {
-    id: 'train-' + number, lineId, number, active: true, capacity: CAPACITY, speed: TRAIN_SPEED,
-    operatingCost: OPERATING_COST, at: 0, direction: 1, phase: 'dwell', remaining: DWELL, duration: DWELL, loads: [],
+    id: 'train-' + number, lineId, number, active: true, capacity: hongKong ? HKD.capacity : CAPACITY, speed: TRAIN_SPEED,
+    operatingCost: hongKong ? HKD.crewMinute : OPERATING_COST, at: 0, direction: 1, phase: 'dwell', remaining: DWELL, duration: DWELL, loads: [],
   }
 }
 
@@ -33,6 +34,7 @@ function unload(game: GameState, train: Train, stationId: string) {
     if (legs.length) {
       const transferred = admitGroup(game, stationId, { ...group, legs, readyAt: game.minute + 2.5 })
       post(game, 'transfers', transferred)
+      trackStationActivity(game, stationId, 'transferred', transferred)
     } else {
       game.egress.push({ ...group, legs, readyAt: game.minute + group.egress })
     }
@@ -55,6 +57,11 @@ function board(game: GameState, train: Train, stationId: string) {
     }
     const boarded = Math.min(seats, group.count)
     trackStationActivity(game, stationId, 'boarded', boarded)
+    const stats = lineActivity(game, train.lineId)
+    if (stats) {
+      stats.boarded += boarded
+      if (isPeak(game.minute)) stats.peak += boarded
+    }
     train.loads.push({ ...group, count: boarded })
     seats -= boarded
     if (boarded < group.count) remaining.push({ ...group, count: group.count - boarded })
@@ -67,8 +74,16 @@ export function operateTrains(game: GameState, elapsed: number) {
   for (const train of game.trains) {
     if (!train.active) continue
     const line = lines.get(train.lineId)
-    if (!line) continue
-    train.remaining = Math.max(0, train.remaining - elapsed)
+    if (!line || line.suspended) continue
+    const timeBefore = train.remaining
+    train.remaining = Math.max(0, timeBefore - elapsed)
+    if (game.hongKong && train.phase === 'travel') {
+      const section = sectionAt(line, train.at, train.direction)!
+      const profile = trackProfile(section, train.speed, train.direction)
+      const before = motionAt(profile, profile.duration * (1 - timeBefore / train.duration)).offset
+      const after = motionAt(profile, profile.duration * (1 - train.remaining / train.duration)).offset
+      postExpense(game, Math.max(0, Math.round((after - before) / 100 * HKD.travelCostKm)), line.id)
+    }
     if (train.remaining > 0) continue
     if (train.phase === 'travel') {
       train.at = nextStop(line, train.at, train.direction)
@@ -86,6 +101,11 @@ export function operateTrains(game: GameState, elapsed: number) {
     const section = sectionAt(line, train.at, train.direction)
     if (!section) continue
     board(game, train, line.stops[train.at])
+    const stats = lineActivity(game, line.id)
+    if (stats) {
+      stats.departures++
+      if (isPeak(game.minute)) stats.load = Math.max(stats.load, trainLoad(train) / train.capacity)
+    }
     if (train.at === 0) line.releaseAt = game.minute + line.headway
     train.phase = 'travel'
     train.duration = trackProfile(section, train.speed, train.direction).duration

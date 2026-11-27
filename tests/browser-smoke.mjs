@@ -2,286 +2,209 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
+import { exampleGame } from '../src/engine/example.ts'
 
-const configuredBrowser = process.env.METROLAB_CHROME
-const executablePath = [
-  configuredBrowser,
+const executablePath = [process.env.METROLAB_CHROME,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   '/usr/bin/google-chrome', '/usr/bin/chromium',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ].find((path) => path && existsSync(path))
-assert.ok(executablePath, 'Set METROLAB_CHROME to the path of a Chromium browser.')
+assert.ok(executablePath, 'Set METROLAB_CHROME to a Chromium executable.')
 
 const url = process.env.METROLAB_URL ?? 'http://localhost:4173/MetroLab/'
 const screenshots = process.env.METROLAB_SCREENSHOTS
 if (screenshots) mkdirSync(screenshots, { recursive: true })
 
 const browser = await chromium.launch({ executablePath })
-const pageErrors = []
-const west = [295, 416]
-const central = [747, 505]
-const east = [1061, 536]
-const market = [497, 667]
-const control = [520, 540]
+const errors = []
+const workers = []
 const map = (page) => page.getByTestId('city-map')
 const stations = (page) => page.getByTestId('map-station')
 const exact = (page, name) => page.getByRole('button', { name, exact: true })
+const dock = (page) => page.getByTestId('draw-controls')
+const central = [635.2, 911.6]
+const tsimShaTsui = [798.4, 722.9]
+const kennedyTown = [303.5, 907.4]
+const start = [944, 407], finish = [1004, 234]
 
-async function snap(page, name) {
-  if (screenshots) {
-    await page.evaluate(() => document.fonts.ready)
-    await page.screenshot({ path: join(screenshots, name + '.png'), animations: 'disabled' })
-  }
-}
-
-async function screen(page, [x, y]) {
+async function screen(page, point) {
   return map(page).evaluate((svg, point) => {
     const result = new DOMPoint(...point).matrixTransform(svg.getScreenCTM())
     return { x: result.x, y: result.y }
-  }, [x, y])
+  }, point)
 }
 
-async function mapClick(page, point) {
-  const location = await screen(page, point)
-  await page.mouse.click(location.x, location.y)
+async function clickMap(page, point, shift = false) {
+  const xy = await screen(page, point)
+  if (shift) await page.keyboard.down('Shift')
+  try { await page.mouse.click(xy.x, xy.y) } finally { if (shift) await page.keyboard.up('Shift') }
 }
 
-async function visible(locator) {
-  await locator.waitFor({ state: 'visible', timeout: 8000 })
+async function ready(page) {
+  await page.locator('[data-testid="hk-map-canvas"][data-assets="ready"]').waitFor({ timeout: 15000 })
+}
+
+async function screenshot(page, name) {
+  if (!screenshots) return
+  await page.evaluate(() => document.fonts.ready)
+  await page.screenshot({ path: join(screenshots, name + '.png'), animations: 'disabled' })
 }
 
 async function open(page) {
-  page.on('pageerror', (error) => pageErrors.push(error.message))
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('requestfailed', (request) => { if (!request.failure()?.errorText.includes('ERR_ABORTED')) errors.push(request.url() + ': ' + request.failure()?.errorText) })
+  page.on('worker', (worker) => workers.push(worker.url()))
   const response = await page.goto(url)
   assert.equal(response?.status(), 200)
 }
 
-function nearTrack(page, trackIndex, fraction) {
-  return page.getByTestId('committed-track').nth(trackIndex).evaluate((path, position) => {
-    const point = path.getPointAtLength(path.getTotalLength() * position)
-    return [point.x, point.y]
-  }, fraction)
-}
-
-async function shiftClick(page, point) {
-  await page.keyboard.down('Shift')
-  try { await mapClick(page, point) } finally { await page.keyboard.up('Shift') }
-}
-
-async function savedState(page) {
+async function save(page, zh = false) {
+  await exact(page, zh ? '設定' : 'Settings').click()
+  await page.getByRole('dialog').getByRole('button', { name: zh ? /儲存|保存/ : /Save game/ }).click()
   return page.evaluate(() => JSON.parse(localStorage.getItem('metrolab.save')).game)
-}
-
-async function save(page) {
-  await exact(page, 'Settings').click()
-  await exact(page, 'Save game').click()
 }
 
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
-  page.setDefaultTimeout(8000)
+  page.setDefaultTimeout(10000)
   await open(page)
-  await visible(page.getByRole('heading', { name: 'Plan a metro for Marlow' }))
-  assert.equal(await stations(page).count(), 11)
-  assert.equal(await page.getByTestId('map-train').count(), 7)
-  await visible(page.getByTestId('raised-cityscape'))
-  await snap(page, 'marlow-example')
-  const mapView = await map(page).getAttribute('viewBox')
-  const planTrack = await page.getByTestId('committed-track').first().getAttribute('d')
-  await exact(page, 'Show plan view').click()
-  await visible(page.getByTestId('flat-cityscape'))
-  assert.equal(await map(page).getAttribute('viewBox'), mapView)
-  assert.equal(await page.getByTestId('committed-track').first().getAttribute('d'), planTrack)
-  await exact(page, 'Show 2.5D city').click()
-  await page.mouse.move(600, 380)
-  await page.mouse.wheel(0, -250)
-  await page.waitForFunction((value) => document.querySelector('[data-testid=city-map]').getAttribute('viewBox') !== value, mapView)
-  const zoomedView = await map(page).getAttribute('viewBox')
-  await page.mouse.move(600, 380)
+  await page.getByRole('heading', { name: 'Hong Kong' }).waitFor()
+  await ready(page)
+  assert.equal(await stations(page).count(), 0)
+  assert.equal(await page.getByTestId('committed-track').count(), 0)
+  assert.equal(await page.locator('html').getAttribute('lang'), 'en')
+  await screenshot(page, 'hong-kong-city')
+
+  const initialCamera = await map(page).getAttribute('viewBox')
+  await exact(page, 'Zoom in').click()
+  assert.notEqual(await map(page).getAttribute('viewBox'), initialCamera)
+  const cameraPoint = await screen(page, [870, 900])
+  const zoomedCamera = await map(page).getAttribute('viewBox')
+  await page.mouse.move(cameraPoint.x, cameraPoint.y)
   await page.mouse.down()
-  await page.mouse.move(675, 425, { steps: 8 })
+  await page.mouse.move(cameraPoint.x + 76, cameraPoint.y + 23, { steps: 8 })
   await page.mouse.up()
-  assert.notEqual(await map(page).getAttribute('viewBox'), zoomedView)
+  assert.notEqual(await map(page).getAttribute('viewBox'), zoomedCamera)
   await exact(page, 'Reset map view').click()
-  await page.waitForFunction((value) => document.querySelector('[data-testid=city-map]').getAttribute('viewBox') === value, mapView)
-  console.log('2.5D, plan view geometry, example, zoom, pan and reset passed')
+  assert.equal(await map(page).getAttribute('viewBox'), initialCamera)
 
-  await page.getByRole('button', { name: /^Career/ }).click()
-  await visible(page.getByRole('heading', { name: 'Transit network' }))
-  assert.equal(await stations(page).count(), 0)
-  assert.equal(await page.getByTestId('metric-budget').textContent(), '$20M')
+  await page.getByRole('button', { name: /Career mode/ }).click()
+  const startupBudget = await page.getByTestId('metric-budget').innerText()
+  assert.match(startupBudget, /HKD.*38/)
   await exact(page, 'Draw line').click()
-  await mapClick(page, [280, 250])
-  await shiftClick(page, [307.5, 280])
-  await mapClick(page, [335, 250])
-  await visible(page.getByTestId('draw-controls').getByText(/The minimum is 250 m/))
-  assert.ok(await page.locator('[data-testid="planned-track"][stroke="#c3333d"]').count() > 0)
-  assert.ok(await exact(page, 'Finish construction').isDisabled())
-  await page.keyboard.press('Escape')
+  await clickMap(page, central)
+  await clickMap(page, [(central[0] + tsimShaTsui[0]) / 2, (central[1] + tsimShaTsui[1]) / 2])
+  assert.equal(await page.getByTestId('proposed-station').count(), 0)
   assert.equal(await stations(page).count(), 0)
-  assert.equal(await page.getByTestId('metric-budget').textContent(), '$20M')
-  console.log('A tight alignment is blocked and cancelling its draft preserves the budget')
-
-  await exact(page, 'Draw line').click()
-  await mapClick(page, west)
-  await shiftClick(page, control)
-  await mapClick(page, central)
+  assert.equal(await page.getByTestId('metric-budget').innerText(), startupBudget)
+  await dock(page).getByLabel('Construction method').selectOption('elevated')
+  await clickMap(page, central, true)
+  await clickMap(page, tsimShaTsui, true)
   assert.equal(await page.getByTestId('proposed-station').count(), 2)
-  assert.equal(await page.getByTestId('track-control').count(), 1)
-  assert.equal(await stations(page).count(), 0)
-  assert.match(await page.getByTestId('planned-track').first().getAttribute('d'), /A/)
-  await page.getByRole('textbox', { name: 'Line name' }).fill('West Link')
-  await exact(page, '简中').click()
-  await visible(page.getByRole('button', { name: '完成建设', exact: true }))
-  assert.equal(await page.getByTestId('proposed-station').count(), 2)
-  assert.equal(await page.getByRole('textbox', { name: '线路名称' }).inputValue(), 'West Link')
-  await exact(page, 'English').click()
-  await snap(page, 'engineering-planning')
-  await map(page).focus()
-  await page.keyboard.press('Enter')
-  await visible(page.getByRole('heading', { name: 'West Link' }))
-  assert.equal(await stations(page).count(), 2)
-  await exact(page, 'Edit line').click()
-  await page.getByLabel('Custom color').fill('#3666bf')
-  await mapClick(page, control)
-  await visible(exact(page, 'Remove control point'))
-  await mapClick(page, [525, 523])
-  await exact(page, 'Apply changes').click()
-  const originalTrack = await page.getByTestId('committed-track').first().getAttribute('d')
-  assert.match(originalTrack, /A/)
-  assert.equal(await page.getByTestId('committed-track').first().getAttribute('stroke'), '#3666bf')
-  await page.getByRole('button', { name: /^Buy a train/ }).click()
-  await page.getByRole('combobox', { name: 'Terminal dispatch interval' }).selectOption('3')
+  assert.ok(await dock(page).getByRole('button', { name: 'Build alignment' }).isDisabled())
+  await dock(page).getByLabel('Construction method').selectOption('underground')
+  const budget = page.getByTestId('construction-budget')
+  assert.match(await budget.innerText(), /Marine tunnel supplement/)
+  assert.match(await budget.innerText(), /Station works/)
+  assert.match(await budget.innerText(), /Budget after confirmation/)
+  await ready(page)
+  await screenshot(page, 'hong-kong-construction')
+  await dock(page).getByRole('button', { name: 'Build alignment' }).click()
+  assert.notEqual(await page.getByTestId('metric-budget').innerText(), startupBudget)
+  assert.deepEqual(await stations(page).evaluateAll((items) => items.map((item) => item.getAttribute('aria-label'))), ['Central', 'Tsim Sha Tsui'])
+  assert.equal(await page.getByTestId('committed-track').count(), 1)
 
-  await exact(page, 'Draw line').click()
-  await mapClick(page, central)
-  await visible(page.getByTestId('draw-controls').getByText('Extend West Link', { exact: true }).first())
-  await mapClick(page, east)
-  await exact(page, 'Finish construction').click()
-  await visible(page.getByRole('heading', { name: 'West Link' }))
-  assert.equal(await stations(page).count(), 3)
-  const extendedTrack = await page.getByTestId('committed-track').first().getAttribute('d')
-  assert.ok(extendedTrack.startsWith(originalTrack))
-  assert.equal(await page.getByTestId('map-train').count(), 1)
-  console.log('Direct line drawing, bilingual draft, geometric editing, terminal extension and fleet preservation passed')
-
-  await exact(page, 'Draw line').click()
-  await mapClick(page, central)
-  await mapClick(page, market)
-  await page.getByRole('textbox', { name: 'Line name' }).fill('Market Link')
-  await exact(page, 'Finish construction').click()
-  await visible(page.getByRole('heading', { name: 'Market Link' }))
-  await page.getByRole('button', { name: /^Buy a train/ }).click()
-  await exact(page, 'Inspect').click()
-  await mapClick(page, central)
-  await visible(page.locator('.secondary-status').getByText('Interchange'))
-  await exact(page, 'Draw line').click()
-  await mapClick(page, central)
-  const mode = page.getByRole('combobox', { name: 'Drawing mode' })
-  await visible(mode)
-  assert.notEqual(await mode.inputValue(), '')
-  await mode.selectOption('')
-  await mapClick(page, market)
-  await page.getByRole('textbox', { name: 'Line name' }).fill('Market Local')
-  await exact(page, 'Finish construction').click()
-  await visible(page.getByRole('heading', { name: 'Market Local' }))
-  assert.equal(await page.getByTestId('committed-track').count(), 3)
-  const sharedPoint = await nearTrack(page, 1, 0.52)
-  await exact(page, 'Build station').click()
-  await mapClick(page, sharedPoint)
-  await visible(page.getByRole('heading', { name: 'Insert station' }))
-  await page.getByRole('checkbox', { name: /Market Local/ }).check()
-  await exact(page, 'Insert station').click()
-  assert.equal(await stations(page).count(), 5)
-  await visible(page.locator('.secondary-status').getByText('Interchange'))
-  console.log('Automatic interchange, shared-terminal choice and overlapping line insertion passed')
-
-  await mapClick(page, west)
-  await page.getByRole('textbox', { name: 'Station name' }).fill('West Exchange')
-  await exact(page, 'Apply station name').click()
-  await visible(page.getByRole('heading', { name: 'West Exchange' }))
-  await page.getByRole('button', { name: /Upgrade station/ }).click()
-  await visible(page.getByText('Station · Level 2'))
-  await exact(page, 'Relocate station').click()
-  await mapClick(page, [284, 435])
-  await visible(page.getByRole('status').getByText('Station relocated.'))
-  await exact(page, 'Undo').click()
-  assert.equal(await stations(page).count(), 5)
-  const insertionPoint = await nearTrack(page, 0, 0.30)
+  await page.getByRole('button', { name: /Buy a train/ }).click()
+  await page.getByRole('button', { name: /Buy a train/ }).click()
+  await page.getByLabel('Base fare per line · HKD').fill('14')
+  await page.locator('.fare-form').getByRole('button', { name: 'Confirm' }).click()
+  await exact(page, 'Suspend service').click()
+  assert.equal(await page.getByTestId('map-train').count(), 0)
+  await exact(page, 'Resume service').click()
   await exact(page, '4× speed').click()
-  await page.waitForFunction(() => Number(document.querySelector('[data-testid=metric-ridership]').textContent.replace(/,/g, '')) > 0,
-    null, { timeout: 26000 })
-  const liveTrains = await page.getByTestId('map-train').evaluateAll((entries) => entries.map((entry) => entry.dataset.train).sort())
-  await exact(page, 'Build station').click()
-  await mapClick(page, insertionPoint)
-  await visible(page.getByRole('status').getByText('Station inserted on the selected tracks.'))
-  assert.equal(await stations(page).count(), 6)
-  assert.deepEqual(await page.getByTestId('map-train').evaluateAll((entries) => entries.map((entry) => entry.dataset.train).sort()), liveTrains)
-  await page.waitForFunction(() => document.querySelector('[data-testid=game-clock]').textContent >= '08:05',
-    null, { timeout: 45000 })
+  await page.waitForFunction(() => Number(document.querySelector('[data-testid="metric-ridership"]')?.textContent?.replace(/\D/g, '')) > 0,
+    undefined, { timeout: 22000 })
   await exact(page, 'Pause').click()
-  await save(page)
-  const saveBeforeLanguage = await savedState(page)
-  assert.equal(saveBeforeLanguage.version, 3)
-  assert.ok(saveBeforeLanguage.today.arrived > 0)
-  assert.equal(saveBeforeLanguage.trains.length, 2)
-  assert.equal(saveBeforeLanguage.lines[0].stops.length, 4)
-  assert.ok(saveBeforeLanguage.stations.some((station) => station.name === 'West Exchange'))
-  console.log('Naming, upgrading, relocation, undo, live insertion, trains and actual ridership passed')
+  assert.ok(workers.some((worker) => worker.includes('simulation.worker')))
+  let stored = await save(page)
+  assert.equal(stored.cityId, 'hong-kong')
+  assert.equal(stored.version, 4)
+  assert.equal(stored.lines[0].fare, 14)
+  assert.equal(stored.today.fares, 14 * stored.today.arrived)
+  assert.equal(stored.today.subsidy, 0)
 
-  const clock = await page.getByTestId('game-clock').textContent()
-  const layer = page.getByRole('combobox', { name: 'Map layer' })
-  for (const key of ['population', 'demand', 'coverage', 'congestion', 'accessibility', 'engineering']) {
-    await layer.selectOption(key)
-    assert.equal(await layer.inputValue(), key)
+  await exact(page, 'Build station').click()
+  await clickMap(page, kennedyTown)
+  await page.getByRole('heading', { name: 'Confirm construction' }).waitFor()
+  assert.equal(await stations(page).count(), 2)
+  await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click()
+  await page.getByRole('heading', { name: 'Kennedy Town', exact: true }).waitFor()
+
+  await exact(page, 'Draw line').click()
+  await clickMap(page, start)
+  await clickMap(page, finish)
+  assert.equal(await page.getByTestId('proposed-station').count(), 0)
+  await dock(page).getByRole('button', { name: 'Build alignment' }).click()
+  assert.equal(await stations(page).count(), 3)
+  await page.getByText('Add at least two stations to run trains on this alignment.').waitFor()
+  for (const fraction of [.23, .81]) {
+    await exact(page, 'Build station').click()
+    await clickMap(page, start.map((coordinate, i) => coordinate + (finish[i] - coordinate) * fraction))
+    await page.getByRole('heading', { name: 'Insert station', exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Insert station', exact: true }).click()
   }
-  await visible(page.locator('.engineering-legend').getByText(/250–400 m/))
-  await exact(page, 'Analysis').click()
-  await visible(page.getByRole('heading', { name: 'Operations analysis' }))
-  assert.ok(await page.locator('.trend-bar').count() >= 2)
-  await snap(page, 'career-operations')
-  await exact(page, '简中').click()
-  await visible(page.getByRole('heading', { name: '运营分析' }))
-  assert.equal(await page.getByTestId('game-clock').textContent(), clock)
-  assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN')
-  await snap(page, 'career-operations-zh')
-  await page.reload()
-  await visible(page.getByRole('heading', { name: '为马洛市规划地铁' }))
-  await page.getByRole('button', { name: /^继续游戏/ }).click()
-  await visible(page.getByRole('heading', { name: '轨道交通网络' }))
-  assert.equal(await stations(page).count(), 6)
-  assert.equal(await page.getByTestId('game-clock').textContent(), clock)
-  await visible(page.getByRole('button', { name: 'West Exchange', exact: true }).first())
-  await exact(page, '设置').click()
-  await exact(page, '读取存档').click()
-  await visible(page.getByRole('status').getByText('已读取本地存档。'))
-  await exact(page, '主菜单').click()
-  await page.getByRole('button', { name: /^沙盒模式/ }).click()
-  await exact(page, '确认').click()
-  assert.equal(await stations(page).count(), 0)
-  assert.equal(await page.getByTestId('metric-budget').textContent(), '不限')
-  await exact(page, '设置').click()
-  await exact(page, '重置游戏').click()
-  await exact(page, '确认').click()
-  await visible(page.getByRole('heading', { name: '为马洛市规划地铁' }))
-  assert.equal(await page.getByRole('button', { name: /^继续游戏/ }).count(), 0)
-  console.log('Engineering layer, hourly metrics, bilingual state, autosave restoration, Sandbox and reset passed')
+  assert.equal(await stations(page).count(), 5)
+  stored = await save(page)
+  assert.deepEqual(stored.lines.map((line) => line.stops.length), [2, 2])
+  assert.equal(stored.lines[1].track.length, 1)
+  assert.ok(stored.lines[1].openEnds.head && stored.lines[1].openEnds.tail)
 
-  const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: 'zh-CN', isMobile: true, hasTouch: true })
+  await exact(page, 'Inspect').click()
+  await page.getByLabel('Map layer').selectOption('demand')
+  await clickMap(page, [478, 1000])
+  await page.getByTestId('hk-demand-directions').waitFor()
+  await page.getByRole('heading', { name: 'Main destinations · estimated' }).waitFor()
+  for (const layer of ['population', 'employment', 'coverage', 'flow']) {
+    await page.getByLabel('Map layer').selectOption(layer)
+    assert.equal(await page.getByLabel('Map layer').inputValue(), layer)
+  }
+  await exact(page, '繁中').click()
+  await page.waitForFunction(() => document.documentElement.lang === 'zh-HK')
+  assert.equal(await stations(page).first().getAttribute('aria-label'), '中環')
+  assert.equal(await stations(page).nth(1).getAttribute('aria-label'), '尖沙咀')
+  await exact(page, '營運分析').click()
+  await page.getByRole('heading', { name: '營運總覽' }).waitFor()
+  await screenshot(page, 'hong-kong-operations-zh')
+  await exact(page, 'English').click()
+  await save(page)
+  await page.reload()
+  await page.getByRole('button', { name: /Continue/ }).click()
+  assert.equal(await stations(page).count(), 5)
+  assert.equal(await page.getByTestId('committed-track').count(), 2)
+
+  const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'zh-HK' })
   await open(mobile)
-  await visible(mobile.getByRole('heading', { name: '为马洛市规划地铁' }))
-  assert.equal(await mobile.locator('html').getAttribute('lang'), 'zh-CN')
-  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth), 390)
-  await exact(mobile, 'English').click()
-  await visible(mobile.getByRole('heading', { name: 'Plan a metro for Marlow' }))
-  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth), 390)
-  await mobile.getByRole('button', { name: /^Sandbox/ }).click()
-  await exact(mobile, 'Draw line').click()
-  await visible(mobile.getByTestId('draw-controls'))
-  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth), 390)
-  assert.deepEqual(pageErrors, [])
-  console.log('Narrow 390 px viewport and both interface languages passed')
+  await mobile.getByRole('heading', { name: '香港', exact: true }).waitFor()
+  await ready(mobile)
+  assert.equal(await mobile.locator('html').getAttribute('lang'), 'zh-HK')
+  assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+  await mobile.getByRole('button', { name: /經營模式/ }).click()
+  await exact(mobile, '繪製路線').click()
+  await dock(mobile).waitFor({ state: 'visible' })
+  assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+
+  const legacy = await browser.newPage({ viewport: { width: 1400, height: 860 }, locale: 'en-US' })
+  const legacyGame = { ...exampleGame(), version: 3 }
+  await legacy.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)), { savedAt: new Date().toISOString(), game: legacyGame })
+  await open(legacy)
+  await legacy.getByRole('button', { name: /Continue/ }).click()
+  assert.equal(await stations(legacy).count(), legacyGame.stations.length)
+  assert.equal(await legacy.getByTestId('committed-track').count(), legacyGame.lines.length)
+  await legacy.getByTestId('raised-cityscape').waitFor()
+
+  assert.deepEqual(errors, [])
+  console.log('Hong Kong desktop construction, operations, layers, language, save loading, mobile layout and Marlow migration passed.')
 } finally {
   await browser.close()
 }
