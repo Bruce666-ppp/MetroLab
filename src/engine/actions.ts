@@ -3,7 +3,7 @@ import { allTrack, headAnchor, openEndOf, tailAnchor } from './alignment.ts'
 import { canAfford, HKD, interchangePrice, measurePieces, salvage, spendCapital, trainPrice, trainRefund, upgradePrice } from './economy.ts'
 import { clamp } from './geometry.ts'
 import { hongKongName } from './hongKong.ts'
-import { pairsOf, stationPreview } from './network.ts'
+import { pairsOf, stationPreview, stationSiteError } from './network.ts'
 import { abandonTrip, withdrawLineTrips } from './passengers.ts'
 import { maxNameLength, newStation, quoteInsertion, quoteLine, roundPoint } from './planning.ts'
 import type { PlanningError } from './planning.ts'
@@ -41,6 +41,8 @@ export function relocationQuote(game: GameState, id: string, target: Point) {
   const station = game.stations.find((entry) => entry.id === id)
   if (!station) return { cost: 0, error: 'notFound' as const }
   const city = getCity(game.cityId)
+  const siteError = city.hongKong && stationSiteError(city, target)
+  if (siteError) return { cost: 0, error: siteError }
   const preview = stationPreview(city, game, point, id, station.method)
   if (preview.error) return { cost: 0, error: preview.error }
   const stations = game.stations.map((entry) => entry.id === id ? { ...entry, position: point, district: preview.district,
@@ -136,6 +138,8 @@ export function applyAction(current: GameState, action: Action): Result {
         reviseService(new Set(quote.tracks.keys()))
         return finish(action.id, quote.cost)
       }
+      const siteError = city.hongKong && stationSiteError(city, action.point)
+      if (siteError) return { error: siteError }
       const number = game.nextId++
       const station = newStation(city, game, roundPoint(action.point), 'station-' + number, number, action.method)
       if (typeof station === 'string') return { error: station }

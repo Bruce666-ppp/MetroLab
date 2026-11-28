@@ -2,6 +2,8 @@
 
 ## 2026-11-28
 
+- Blocked construction when an alignment ends in water. Marked offshore ends in older saves so they can be moved onto land in the line editor.
+- Checked the actual click location as well as the final station position before coastal station placement and track snapping.
 - Distinguished HKU and Shek Tong Tsui in station suggestions and planned labels using the local MTR station, campus exits and market as geographic references.
 - Required new, inserted and relocated stations to be outside water, parks, scenic sites and protected areas in Hong Kong.
 

@@ -9,7 +9,7 @@ import { HKD, measurePieces } from '../src/engine/economy.ts'
 import { elevationAt, HONG_KONG, hongKong, hongKongName, surfaceAt, surveyPoint, walkCells } from '../src/engine/hongKong.ts'
 import { activityPopulation, demandDirections, demandPeriod, demandSurface, TCS_WEEKDAY } from '../src/engine/hongKongDemand.ts'
 import { coveredCells, stationPreview } from '../src/engine/network.ts'
-import { quoteInsertion, quoteLine } from '../src/engine/planning.ts'
+import { quoteInsertion, quoteLine, roundPoint } from '../src/engine/planning.ts'
 import { makeRoutingNetwork, routesFrom } from '../src/engine/routing.ts'
 import { loadGame, saveGame } from '../src/engine/save.ts'
 import { advanceGame, newGame, SAVE_VERSION } from '../src/engine/simulation.ts'
@@ -85,6 +85,38 @@ test('building and moving stations reject sea, inland water and designated parks
     assert.deepEqual(applyAction(game, { type: 'saveLine', design: plan(kennedyTown, point) }), { error })
   }
   assert.deepEqual(game, before)
+})
+
+test('a shoreline click stays invalid when its rounded station position would fall on land', () => {
+  const point = { x: 350, y: 857.365 }
+  const game = act(fresh(), { type: 'buildStation', point: central })
+  assert.equal(stationPreview(city, game, point).error, 'water')
+  assert.equal(stationPreview(city, game, roundPoint(point)).error, undefined)
+  assert.deepEqual(applyAction(game, { type: 'buildStation', point }), { error: 'water' })
+  assert.deepEqual(applyAction(game, { type: 'moveStation', id: game.stations[0].id, point }), { error: 'water' })
+  assert.deepEqual(applyAction(game, { type: 'saveLine', design: plan(kennedyTown, point) }), { error: 'water' })
+})
+
+test('an underground alignment may cross western Victoria Harbour with both ends on land', () => {
+  const game = fresh()
+  const west = { x: 325, y: 898 }, bend = { x: 415, y: 754 }, offshore = { x: 575, y: 789 }, kowloon = { x: 799, y: 720 }
+  const design = { stops: [], name: '', color: '#2864d4', circular: false }
+  for (const head of [[west, bend, offshore], [offshore, bend, west], [west, { x: 1020.2, y: 1193.1 }]]) {
+    const unfinished = { ...design, alignmentEnds: { head } }
+    assert.equal(quoteLine(game, unfinished).error, 'waterAlignmentEnd')
+    assert.deepEqual(applyAction(game, { type: 'saveLine', design: unfinished }), { error: 'waterAlignmentEnd' })
+  }
+  const approach = { ...design, stops: ['west'], proposed: { west }, alignmentEnds: { tail: [bend, offshore] } }
+  assert.deepEqual(applyAction(game, { type: 'saveLine', design: approach }), { error: 'waterAlignmentEnd' })
+
+  const crossing = { ...design, alignmentEnds: { head: [west, bend, kowloon] } }
+  assert.ok(quoteLine(game, crossing).infrastructure.water > 0)
+  const built = act(game, { type: 'saveLine', design: crossing })
+  assert.equal(built.stations.length, 0)
+  const pieces = built.lines[0].openEnds!.head!.pieces
+  const point = pointOnTrack(pieces, trackLength(pieces) * 0.5)!
+  assert.equal(surfaceAt(point), 'water')
+  assert.deepEqual(applyAction(built, { type: 'insertStation', point, lineIds: [built.lines[0].id] }), { error: 'water' })
 })
 
 test('underground track can pass under a park while station insertion on that segment is blocked', () => {

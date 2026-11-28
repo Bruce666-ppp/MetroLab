@@ -238,7 +238,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
     let next = state.hongKong ? appendHongKongStop(state, active, id, point, tolerance) : appendDraftStop(active, id, point)
     if (state.hongKong && point) {
       const city = getCity(state.cityId)
-      const siteError = stationSiteError(city, roundPoint(point))
+      const siteError = stationSiteError(city, point)
         ?? stationPreview(city, state, roundPoint(next.proposed[id]), undefined, active.method).error
       if (siteError) { setNotice({ key: 'error.' + siteError, error: true }); return }
     }
@@ -296,16 +296,15 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
     }
     if (tool === 'station') {
       if (target.selection?.type === 'station') { pick(target.selection); return }
+      const siteError = city.hongKong && (stationSiteError(city, target.point) ??
+        (target.trackPoint && stationSiteError(city, target.trackPoint)))
+      if (siteError) {
+        setInsertion(undefined)
+        setNotice({ key: 'error.' + siteError, error: true })
+        return
+      }
       if (target.trackPoint && target.trackLines?.length) {
         const { trackPoint: point, trackLines: available } = target
-        if (city.hongKong) {
-          const siteError = stationSiteError(city, point)
-          if (siteError) {
-            setInsertion(undefined)
-            setNotice({ key: 'error.' + siteError, error: true })
-            return
-          }
-        }
         if (available.length > 1 || city.hongKong) setInsertion({ point, available, chosen: [available[0]] })
         else insertStation(point, available)
         return

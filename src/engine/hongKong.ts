@@ -161,10 +161,16 @@ export function surfaceAt(point: Point) {
 
 const inInlandWater = indexPolygons(stationSites.water, 60)
 const inRestrictedArea = indexPolygons(stationSites.restricted, 60)
+export function hongKongSiteSurface(point: Point) {
+  if (!inMap(point)) return 'outside'
+  const surface = mapSurface(point)
+  return surface === 'land' && inInlandWater(point) ? 'water' : surface
+}
+
 export function hongKongStationSiteError(point: Point) {
-  const surface = inMap(point) ? mapSurface(point) : 'outside'
+  const surface = hongKongSiteSurface(point)
   if (surface === 'outside') return 'outOfBounds'
-  if (surface === 'water' || inInlandWater(point)) return 'water'
+  if (surface === 'water') return 'water'
   if (inRestrictedArea(point)) return 'restrictedStationSite'
 }
 

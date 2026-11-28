@@ -8,11 +8,11 @@ import { allTrack, openEndOf, sectionKey, trackHits } from '../engine/alignment.
 import { canAfford, HKD } from '../engine/economy.ts'
 import { clamp, distance } from '../engine/geometry.ts'
 import { stationCapacity, stationPreview, stationRadius, stationSiteError, waitingAt } from '../engine/network.ts'
-import { quoteInsertion, quoteLine, roundPoint, selectableInsertions } from '../engine/planning.ts'
+import { quoteInsertion, quoteLine, roundPoint, selectableInsertions, waterTrackEnds } from '../engine/planning.ts'
 import { layers } from '../engine/save.ts'
 import { curveSpeedKmh, ENGINEERING, minimumRadius, pieceTangent, radiusStatus, tangentsAgree, trackColors, trackLength, trackPath, unitsToMeters } from '../engine/track.ts'
 import { trainPosition } from '../engine/trains.ts'
-import type { GameState, Layer, Point, Station, TrackMethod } from '../engine/types.ts'
+import type { GameState, Layer, Point, Station, TrackMethod, TrackSection } from '../engine/types.ts'
 import type { networkReach } from '../engine/analytics.ts'
 import { AnimatedTrain } from './AnimatedTrain.tsx'
 import { BaseMap, layerColors } from './BaseMap.tsx'
@@ -126,9 +126,24 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     return line && point ? [{ train, line, point }] : []
   })
   const selectedStation = selected?.type === 'station' ? stations.get(selected.id) : undefined
-  const handles = draft?.kind === 'edit' ? (draftQuote?.rows ?? []).flatMap(({ section }) =>
-    section.controls.map((point, index) => ({ point, key: sectionKey(section.from, section.to), index }))) : []
-  const selectableControl = (point: Point) => handles.find((handle) => distance(handle.point, point) <= 12 / scale)
+  const handles = draft?.kind === 'edit' ? (draftQuote?.rows ?? []).flatMap(({ section }) => {
+    const key = sectionKey(section.from, section.to)
+    const controls = section.controls.map((point, index) => ({ point, key, index }))
+    if (hongKong) for (const { side, point } of waterTrackEnds(section)) {
+      controls.push({ point, key, index: side === 'head' ? -1 : section.controls.length })
+    }
+    return controls
+  }) : []
+
+  function selectableControl(point: Point) {
+    let nearest: typeof handles[number] | undefined
+    let closest = 12 / scale
+    for (const handle of handles) {
+      const gap = distance(handle.point, point)
+      if (gap <= closest) { nearest = handle; closest = gap }
+    }
+    return nearest
+  }
 
   function coordinates(event: ReactPointerEvent<SVGSVGElement>) {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -211,7 +226,8 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   }
 
   const hoveredStation = hover ? nearestStation(hover.world) : undefined
-  const trackInsertion = hover && tool === 'station' && !hoveredStation ? selectableInsertions(game, hover.world, 11 / scale) : []
+  const hoverSiteError = hongKong && hover && tool !== 'select' ? stationSiteError(city, hover.world) : undefined
+  const trackInsertion = hover && tool === 'station' && !hoveredStation && !hoverSiteError ? selectableInsertions(game, hover.world, 11 / scale) : []
   const previewPoint = insertionPoint ?? trackInsertion[0]?.point ?? (hover && hongKong ? roundPoint(hover.world) : hover?.world)
   const preview = previewPoint && (tool === 'move' || tool === 'station' && !hoveredStation)
     ? stationPreview(city, game, previewPoint, tool === 'move' ? selectedStation?.id : undefined,
@@ -220,7 +236,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     ? relocationQuote(game, selectedStation.id, previewPoint) : undefined
   const stationQuote = trackInsertion[0] && quoteInsertion(game, trackInsertion[0].point, [trackInsertion[0].lineId])
   const previewCost = moveQuote?.cost ?? stationQuote?.cost ?? preview?.cost ?? 0
-  const previewError = preview?.error ?? moveQuote?.error ?? stationQuote?.error ??
+  const previewError = (insertionPoint ? undefined : hoverSiteError) ?? preview?.error ?? moveQuote?.error ?? stationQuote?.error ??
     (preview && !canAfford(game, previewCost) ? 'funds' : undefined)
   const previewSiteError = previewError === 'outOfBounds' || previewError === 'water' || previewError === 'restrictedStationSite'
   const oldDraftLine = draft && lineById.get(draft.id ?? '')
@@ -241,8 +257,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const plannedStations = draftQuote?.newStations ?? []
   const candidatePosition = draft && hover && !panning && !draft.control && !hoveredStation
     ? roundPoint(hoverDraft?.proposed[ghostId] ?? hover.world) : undefined
-  const candidateSiteError = candidatePosition && (stationSiteError(city, candidatePosition) ??
-    (hoverDraft?.proposed[ghostId] && hover ? stationSiteError(city, roundPoint(hover.world)) : undefined))
+  const candidateSiteError = candidatePosition && (hoverSiteError ?? stationSiteError(city, candidatePosition))
   const plannedStationHit = hongKong ? Math.min(13, 11 / scale) : 11 / scale
   let candidateName: string | undefined
   if (candidatePosition && !candidateSiteError && !plannedStations.some((station) => distance(station.position, candidatePosition) < plannedStationHit)) {
@@ -292,6 +307,19 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
       return y
     }
     return point.y + preferred
+  }
+
+  function waterEndMarkers(section: TrackSection) {
+    if (!hongKong) return null
+    const arm = 4.5 / scale
+    return waterTrackEnds(section).map(({ side, point }) => {
+      const cross = `M ${-arm} ${-arm} L ${arm} ${arm} M ${-arm} ${arm} L ${arm} ${-arm}`
+      return <g key={sectionKey(section.from, section.to) + side} data-testid="water-alignment-end" fill="none"
+        transform={`translate(${point.x} ${point.y})`}>
+        <path d={cross} stroke="#fffdf6" strokeWidth="5.3" vectorEffect="non-scaling-stroke" />
+        <path d={cross} stroke={trackColors.invalid} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+      </g>
+    })
   }
 
   return <div className={'city-map tool-' + tool + (panning ? ' is-panning' : '')} ref={viewport}>
@@ -355,6 +383,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             {layer !== 'engineering' && line.track.length > 0 && sections.filter(openEndOf).map((section) =>
               <path key={sectionKey(section.from, section.to)} d={trackPath(section.pieces)} stroke="#fffff3" strokeOpacity=".87"
                 strokeDasharray="3 5" strokeWidth="1.45" vectorEffect="non-scaling-stroke"/>)}
+            {draft?.id !== line.id && sections.flatMap(waterEndMarkers)}
           </g>
         })}
         {draft && <g fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5.5">
@@ -372,6 +401,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             <rect key={index} data-testid="track-control" x={point.x - 4 / scale} y={point.y - 4 / scale}
               width={8 / scale} height={8 / scale} transform={'rotate(45 ' + point.x + ' ' + point.y + ')'}
               fill="#fffdf6" stroke={draft.color} strokeWidth="1.7" vectorEffect="non-scaling-stroke"/>)}
+          {drawnQuote?.rows.flatMap(({ section }) => waterEndMarkers(section))}
           {draft.stops.map((id, index) => {
             const point = draft.proposed[id]
             if (!point) return null

@@ -15,7 +15,7 @@ MetroLab is an original urban rail planning game. Preserve its construction and 
 
 ## Map and interface
 
-- In Hong Kong, Draw line starts a provisional plan from any playable geographic point. Ordinary clicks add track control points. Shift-click and explicit station placement add stops. Track may be confirmed before stops are added. Offer extensions from eligible terminals and preserve the draft, camera and custom names across locale changes. Charge for construction only after the player confirms the plan.
+- In Hong Kong, Draw line starts a provisional plan from any playable geographic point. Ordinary clicks add track control points. Shift-click and explicit station placement add stops. Track may be confirmed before stops are added when the alignment ends on land. An underground alignment can cross water between its ends. Offer extensions from eligible terminals and preserve the draft, camera and custom names across locale changes. Charge for construction only after the player confirms the plan.
 - Build station places a standalone stop on land and snaps to an alignment on track. Split occupied sections without moving active trains or dropping their passengers. Ask the player which lines to stop on when more than one alignment matches.
 - Keep Hong Kong source provenance, official control totals, public data terms and model assumptions documented in `docs/HONG-KONG-DATA.md`. Derive its cartography and activity grids from source geography. Keep the rail overlay above the extruded city and let players choose their own routes and station locations.
 

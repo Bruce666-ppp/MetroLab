@@ -59,9 +59,10 @@ export function DrawControls({ game, draft, quote, preview, choose, commit, canc
   const choices = extensionChoices(game, draft.anchor)
   const value = preview ?? quote
   const radius = value.radius ?? value.totalRadius
+  const error = quote.error === 'waterAlignmentEnd' ? quote.error : value.error
   const invalid = value.error === 'curve'
-  const warning = invalid ? t('engineering.invalidRadius', { minimum: ENGINEERING.minimumRadius }) :
-    value.error && value.error !== 'needsStops' ? t('error.' + value.error) :
+  const warning = error === 'curve' ? t('engineering.invalidRadius', { minimum: ENGINEERING.minimumRadius }) :
+    error && error !== 'needsStops' ? t('error.' + error) :
     draft.control ? t('engineering.moveControl') :
     !game.hongKong && draft.pending.length ? t('engineering.finishControl') : undefined
   const label = draft.name || (existing ? lineLabel(existing, t, false, game) :
@@ -75,7 +76,7 @@ export function DrawControls({ game, draft, quote, preview, choose, commit, canc
     ['cost', gameMoney(game, value.cost, locale)],
   ]
   const mode = draft.kind === 'edit' ? t('line.edit') : existing ? t('engineering.extend', { line: label }) : t('engineering.create')
-  return <section className={'draw-controls' + (invalid ? ' invalid' : '')} aria-label={t('engineering.planning')} data-testid="draw-controls">
+  return <section className={'draw-controls' + (invalid || error === 'waterAlignmentEnd' ? ' invalid' : '')} aria-label={t('engineering.planning')} data-testid="draw-controls">
     <div className="draw-controls-heading">
       <div className="draw-title"><Route size={17}/><div><strong>{mode}</strong><span className="draw-line-name">
         <i style={{ background: draft.color }}/>{label}</span></div></div>

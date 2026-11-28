@@ -3,14 +3,15 @@ import { getCity } from './city.ts'
 import { canAfford, HKD, interchangePrice, measurePieces, trackMethods } from './economy.ts'
 import type { EngineeringError } from './economy.ts'
 import { distance } from './geometry.ts'
-import { hongKongName } from './hongKong.ts'
-import { DWELL, pairsOf, stationPreview, TRAIN_SPEED } from './network.ts'
+import { hongKongName, hongKongSiteSurface } from './hongKong.ts'
+import { DWELL, pairsOf, stationPreview, stationSiteError, TRAIN_SPEED } from './network.ts'
 import type { StationSiteError } from './network.ts'
 import { curveSpeedKmh, ENGINEERING, pieceLength, radiusStatus, trackLength, trackProfile } from './track.ts'
-import type { City, GameState, Line, LineDesign, Point, Station, TrackMethod } from './types.ts'
+import type { City, GameState, Line, LineDesign, Point, Station, TrackMethod, TrackSection } from './types.ts'
 
 export type PlanningError = StationSiteError | 'tooClose' | 'invalidStops' | 'needsStops' |
-  'invalidColor' | 'curve' | 'controlPoint' | 'noTrack' | 'differentTrack' | 'funds' | 'invalidMethod' | 'openLoop' | EngineeringError
+  'invalidColor' | 'curve' | 'controlPoint' | 'noTrack' | 'differentTrack' | 'funds' | 'invalidMethod' | 'openLoop' | 'waterAlignmentEnd' |
+  EngineeringError
 
 export const maxNameLength = 36
 export const colorPattern = /^#[a-f\d]{6}$/i
@@ -20,6 +21,13 @@ export function openEndPoints(line?: Line) {
   const head = line?.openEnds?.head, tail = line?.openEnds?.tail
   return { head: head ? [head.pieces[0].from, ...head.controls, ...(line?.stops.length ? [] : [head.pieces.at(-1)!.to])] : undefined,
     tail: tail ? [...tail.controls, tail.pieces.at(-1)!.to] : undefined }
+}
+
+export function waterTrackEnds(section: TrackSection) {
+  const ends: { side: 'head' | 'tail'; point: Point }[] = []
+  if (section.from === headAnchor) ends.push({ side: 'head', point: section.pieces[0].from })
+  if (section.to === tailAnchor) ends.push({ side: 'tail', point: section.pieces.at(-1)!.to })
+  return ends.filter(({ point }) => hongKongSiteSurface(point) === 'water')
 }
 
 export function newStation(city: City, game: GameState, point: Point, id: string, number: number, method: TrackMethod = 'underground'): Station | PlanningError {
@@ -38,6 +46,8 @@ export function selectableInsertions(game: GameState, point: Point, tolerance: n
 
 export function quoteInsertion(game: GameState, point: Point, lineIds: string[]) {
   const city = getCity(game.cityId)
+  const siteError = city.hongKong && stationSiteError(city, point)
+  if (siteError) return { error: siteError }
   const selected = game.lines.filter((line) => lineIds.includes(line.id))
   const hits = trackHits(selected, point, 0.025)
   if (!hits.length) return { error: 'noTrack' as const }
@@ -79,8 +89,9 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
     }
     const point = roundPoint(proposed)
     positions.set(stop, point)
-    const station = newStation(city, { ...game, stations: game.stations.concat(newStations) }, point, stop, game.nextId + newStations.length,
-      design.stationMethods?.[stop] ?? design.method)
+    const siteError = city.hongKong && stationSiteError(city, proposed)
+    const station = siteError || newStation(city, { ...game, stations: game.stations.concat(newStations) }, point, stop,
+      game.nextId + newStations.length, design.stationMethods?.[stop] ?? design.method)
     if (typeof station === 'string') invalid(station)
     else newStations.push(station)
   }
@@ -109,6 +120,15 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
       positions.set(tailAnchor, tails.at(-1)!)
       handles[sectionKey(route.at(-1)!, tailAnchor)] = tails.slice(0, -1)
       route.push(tailAnchor)
+    }
+  }
+  if (city.hongKong) {
+    for (const anchor of [headAnchor, tailAnchor]) {
+      const point = positions.get(anchor)
+      if (!point) continue
+      const surface = hongKongSiteSurface(point)
+      if (surface === 'water') invalid('waterAlignmentEnd')
+      if (surface === 'outside') invalid('outsideArea')
     }
   }
   const controls = pairsOf(route, design.circular).flatMap(([from, to]) =>

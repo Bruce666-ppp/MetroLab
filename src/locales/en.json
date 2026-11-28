@@ -364,6 +364,7 @@
     "notFound": "That item is no longer available.",
     "outOfBounds": "Choose a location inside the city.",
     "water": "Stations must be built on land.",
+    "waterAlignmentEnd": "Place both ends of the alignment on land. Underground track can cross water.",
     "restrictedStationSite": "Stations cannot be built inside parks, protected areas or scenic sites.",
     "tooClose": "Move farther from the nearest station.",
     "needsStops": "Add more stations before building this line.",

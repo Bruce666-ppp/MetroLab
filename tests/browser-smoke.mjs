@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
+import { applyAction } from '../src/engine/actions.ts'
 import { exampleGame } from '../src/engine/example.ts'
+import { quoteLine } from '../src/engine/planning.ts'
+import { newGame } from '../src/engine/simulation.ts'
 
 const executablePath = [process.env.METROLAB_CHROME,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -30,6 +33,8 @@ const kennedyTown = [303.5, 907.4]
 const hku = [400.5, 887.8]
 const shekTongTsui = [407.3, 870.4]
 const peakGarden = [490.6, 1001]
+const westShore = [325, 898], harbourBend = [415, 754], offshoreEnd = [575, 789], kowloonShore = [799, 720]
+const harbourWarning = 'Place both ends of the alignment on land.'
 const start = [944, 407], finish = [1004, 234]
 
 async function screen(page, point) {
@@ -127,6 +132,15 @@ try {
   }))
   await screenshot(page, 'hong-kong-station-names')
   await exact(page, 'English').click()
+  await page.keyboard.press('Escape')
+  await exact(page, 'Draw line').click()
+  for (const point of [westShore, harbourBend, offshoreEnd]) await clickMap(page, point)
+  await dock(page).getByText(harbourWarning, { exact: false }).waitFor()
+  await page.getByTestId('water-alignment-end').waitFor()
+  assert.ok(await dock(page).getByRole('button', { name: 'Build alignment' }).isDisabled())
+  assert.equal(await page.getByTestId('committed-track').count(), 0)
+  assert.equal(await page.getByTestId('metric-budget').innerText(), startupBudget)
+  await screenshot(page, 'hong-kong-water-end')
   await page.keyboard.press('Escape')
   await exact(page, 'Draw line').click()
   await moveMap(page, central)
@@ -273,6 +287,43 @@ try {
   await dock(mobile).waitFor({ state: 'visible' })
   assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
 
+  const repair = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
+  const seed = newGame('sandbox', 'hong-kong')
+  const alignment = (end) => ({ stops: [], name: 'Harbour survey', color: '#2864d4', circular: false,
+    alignmentEnds: { head: [westShore, harbourBend, end].map(([x, y]) => ({ x, y })) } })
+  const oldHarbourSave = applyAction(seed, { type: 'saveLine', design: alignment(kowloonShore) }).game
+  assert.ok(oldHarbourSave)
+  oldHarbourSave.lines[0].openEnds.head = quoteLine(seed, alignment(offshoreEnd)).rows[0].section
+  await repair.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)),
+    { savedAt: new Date().toISOString(), game: oldHarbourSave })
+  await open(repair)
+  await repair.getByRole('button', { name: /Continue game/ }).click()
+  await repair.getByTestId('water-alignment-end').waitFor()
+  await clickMap(repair, offshoreEnd)
+  await repair.getByText(harbourWarning, { exact: false }).waitFor()
+  await exact(repair, 'Edit line').click()
+  await clickMap(repair, offshoreEnd)
+  await clickMap(repair, kowloonShore)
+  await dock(repair).getByRole('button', { name: 'Build alignment' }).click()
+  await repair.getByTestId('water-alignment-end').waitFor({ state: 'hidden' })
+  assert.equal(await repair.getByTestId('committed-track').count(), 1)
+  assert.equal(await stations(repair).count(), 0)
+
+  await exact(repair, 'Draw line').click()
+  await clickMap(repair, [346, 865])
+  await clickMap(repair, [365, 865])
+  await dock(repair).getByRole('button', { name: 'Build alignment' }).click()
+  await exact(repair, 'Build station').click()
+  await moveMap(repair, [350, 852])
+  await repair.locator('.map-build-tip.invalid').getByText('Stations must be built on land.').waitFor()
+  await clickMap(repair, [350, 852])
+  await repair.getByRole('status').filter({ hasText: 'Stations must be built on land.' }).waitFor()
+  assert.equal(await stations(repair).count(), 0)
+  await clickMap(repair, [355, 865])
+  await repair.getByRole('heading', { name: 'Insert station', exact: true }).waitFor()
+  await exact(repair, 'Insert station').click()
+  assert.equal(await stations(repair).count(), 1)
+
   const legacy = await browser.newPage({ viewport: { width: 1400, height: 860 }, locale: 'en-US' })
   const legacyGame = { ...exampleGame(), version: 3 }
   await legacy.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)), { savedAt: new Date().toISOString(), game: legacyGame })
@@ -284,7 +335,7 @@ try {
   assert.equal(await legacy.locator('.base-map text').count(), 0)
 
   assert.deepEqual(errors, [])
-  console.log('Unlabelled basemaps, local station names, station exclusions, construction, operations, languages, mobile layout and Marlow migration passed.')
+  console.log('Station exclusions, water crossing and legacy endpoint repair, station names, construction, operations, languages, mobile layout and Marlow migration passed.')
 } finally {
   await browser.close()
 }

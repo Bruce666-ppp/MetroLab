@@ -6,11 +6,12 @@ import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, CirclePlus, Flag, M
 import { HEADWAYS, maxNameLength } from '../engine/actions.ts'
 import type { Action } from '../engine/actions.ts'
 import { districtDetails, gameMetrics, lineDetails, networkReach } from '../engine/analytics.ts'
-import { sectionKey } from '../engine/alignment.ts'
+import { allTrack, sectionKey } from '../engine/alignment.ts'
 import { getCity } from '../engine/city.ts'
 import { canAfford, HKD, interchangePrice, milestoneValue, milestones, trainPrice, trainRefund, upgradePrice } from '../engine/economy.ts'
 import { activityPopulation, demandDirections } from '../engine/hongKongDemand.ts'
 import { LINE_COLORS, nextStop, stationCapacity, stationPreview, trainLoad, waitingAt } from '../engine/network.ts'
+import { waterTrackEnds } from '../engine/planning.ts'
 import type { quoteInsertion, quoteLine } from '../engine/planning.ts'
 import { ENGINEERING, unitsPerMinuteToKmh, unitsToMeters } from '../engine/track.ts'
 import { trainPosition } from '../engine/trains.ts'
@@ -210,6 +211,8 @@ export function LinePanel({ game, line, playing, back, station, edit, act, pickT
         [t('metric.operatingToday'), gameMoney(game, (stats?.fares ?? 0) - (stats?.expenses ?? 0), locale)]]}/>
     </section>}
     {legacy && <p className="inline-warning">{t('engineering.legacyWarning', { minimum: ENGINEERING.minimumRadius })}</p>}
+    {game.hongKong && allTrack(line).some((section) => waterTrackEnds(section).length) &&
+      <p className="inline-warning">{t('error.waterAlignmentEnd')}</p>}
     {playing && <ActionButton onClick={edit}><Pencil size={16}/>{t('line.edit')}</ActionButton>}
     <section className="detail-section">
       <div className="section-heading"><h3>{t('line.fleet')}</h3></div>
