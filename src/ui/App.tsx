@@ -8,23 +8,25 @@ import { sectionKey } from '../engine/alignment.ts'
 import { getCity } from '../engine/city.ts'
 import { canAfford, trainRefund } from '../engine/economy.ts'
 import { distance } from '../engine/geometry.ts'
-import { HONG_KONG, surfaceAt } from '../engine/hongKong.ts'
+import { existingMtrStationAt, HONG_KONG, surfaceAt } from '../engine/hongKong.ts'
 import { stationGap, stationPreview, stationSiteError } from '../engine/network.ts'
 import { quoteInsertion, quoteLine, roundPoint } from '../engine/planning.ts'
 import { clearGame, loadGame, saveGame, saveSettings } from '../engine/save.ts'
 import type { Settings } from '../engine/save.ts'
 import { advanceGame, newGame, TICK } from '../engine/simulation.ts'
-import type { GameState, Line, Mode, Speed, TrackMethod } from '../engine/types.ts'
+import type { GameState, Line, Mode, Speed, Station, TrackMethod } from '../engine/types.ts'
 import { CityMap } from './CityMap.tsx'
 import { Footer, Header, Indicators, ModeMenu, Tools } from './Chrome.tsx'
 import { ConfirmDialog, HelpDialog, SettingsDialog } from './Dialogs.tsx'
-import { gameMoney } from './format.ts'
-import { addGeometryControl, appendDraftStop, appendHongKongStop, availableLineColor, draftDesign, editControl, extensionChoices, makeDraft, smoothDraft } from './interaction.ts'
+import { gameMoney, stationLabel } from './format.ts'
+import { addGeometryControl, appendDraftStop, appendHongKongStop, availableLineColor, draftDesign, editControl, extensionChoices, makeDraft,
+  moveDraftStation, replaceDraftStop, smoothDraft } from './interaction.ts'
 import type { LineDraft, MapTarget, Selection, Tool } from './interaction.ts'
-import { AnalyticsPanel, DistrictPanel, InsertionPanel, LineEditor, LinePanel, NetworkOverview, StationPanel, TrainPanel } from './Panels.tsx'
+import { AnalyticsPanel, DistrictPanel, InsertionPanel, LineEditor, LinePanel, NetworkOverview, SharedTrackPanel, StationPanel, TrainPanel } from './Panels.tsx'
 
 type StorageIO = Parameters<typeof loadGame>[0]
-type Confirmation = { title: string; body: string; action: () => void; destructive?: boolean }
+type Confirmation = { title: string; body: string; action: () => void; destructive?: boolean; confirmLabel?: string;
+  alternative?: { label: string; action: () => void } }
 type Notice = { key: string; error?: boolean; milestone?: string }
 type Insertion = { point: MapTarget['point']; available: string[]; chosen: string[] }
 
@@ -50,8 +52,11 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   const draftCurrent = useRef<LineDraft | undefined>(undefined)
   const nextDraftId = useRef(0)
   const draftUndo = useRef<LineDraft[]>([])
+  const draftRedo = useRef<LineDraft[]>([])
   const pausedUndo = useRef<GameState[]>([])
+  const pausedRedo = useRef<GameState[]>([])
   const [undoSize, setUndoSize] = useState(0)
+  const [redoSize, setRedoSize] = useState(0)
   const [session, setSession] = useState(0)
   const reachedMilestones = useRef(game.milestones.length)
 
@@ -139,6 +144,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
 
   function resetDraft() {
     draftUndo.current = []
+    draftRedo.current = []
     draftCurrent.current = undefined
     setDraft(undefined)
   }
@@ -151,10 +157,6 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
 
   function setRate(rate: Speed) {
     if (!playing) return
-    if (rate) {
-      pausedUndo.current = []
-      setUndoSize(0)
-    }
     setSpeed(rate)
   }
 
@@ -166,34 +168,48 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       setNotice({ key: 'error.' + result.error, error: true })
       return undefined
     }
-    if (speed === 0) {
-      pausedUndo.current = [...pausedUndo.current.slice(-14), previous]
-      setUndoSize(pausedUndo.current.length)
-    }
+    const networkEdit = ['buildStation', 'insertStation', 'moveStation', 'removeStation', 'renameStation', 'saveLine', 'removeLine', 'removeSection',
+      'interchange', 'upgradeStation'].includes(command.type)
+    if (networkEdit && speed) setSpeed(0)
+    if (!speed || networkEdit) pausedUndo.current = [...pausedUndo.current.slice(-39), previous]
+    pausedRedo.current = []
+    setUndoSize(pausedUndo.current.length)
+    setRedoSize(0)
     replaceGame(result.game)
     if (message) setNotice({ key: message })
     return result
   }
 
-  function undo() {
+  function stepHistory(redo = false) {
     if (draftCurrent.current) {
-      const previous = draftUndo.current.pop()
-      if (!previous) return
-      draftCurrent.current = previous
-      setDraft(previous)
+      const source = redo ? draftRedo.current : draftUndo.current
+      const destination = redo ? draftUndo.current : draftRedo.current
+      const next = source.pop()
+      if (!next) return
+      destination.push(draftCurrent.current)
+      draftCurrent.current = next
+      setDraft(next)
       return
     }
-    const previous = speed === 0 ? pausedUndo.current.pop() : undefined
-    if (!previous) return
+    const source = redo ? pausedRedo.current : pausedUndo.current
+    const destination = redo ? pausedUndo.current : pausedRedo.current
+    const next = source.pop()
+    if (!next) return
+    if (speed) setSpeed(0)
+    destination.push(current.current)
     setUndoSize(pausedUndo.current.length)
-    replaceGame(previous)
+    setRedoSize(pausedRedo.current.length)
+    replaceGame(next)
     setSelection(undefined)
-    setNotice({ key: 'notice.undone' })
+    setNotice({ key: redo ? 'service.redone' : 'notice.undone' })
   }
 
   function editDraft(next: LineDraft, trackUndo = true) {
     const previous = draftCurrent.current
-    if (previous && trackUndo) draftUndo.current = [...draftUndo.current.slice(-39), previous]
+    if (previous && trackUndo) {
+      draftUndo.current = [...draftUndo.current.slice(-39), previous]
+      draftRedo.current = []
+    }
     draftCurrent.current = next
     setDraft(next)
   }
@@ -201,6 +217,8 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
   function beginLine(line?: Line) {
     if (!playing) return
     draftUndo.current = []
+    draftRedo.current = []
+    if (speed) setSpeed(0)
     nextDraftId.current = 0
     setInsertion(undefined)
     editDraft(makeDraft(current.current, line), false)
@@ -227,7 +245,14 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       color: line?.color ?? availableLineColor(current.current), automaticName: line ? line.automaticName : true })
   }
 
-  function addStop(id: string, point?: MapTarget['point'], tolerance = 0) {
+  function offerExistingStation(station: Station, use: () => void, create: () => void, inspect = false) {
+    const name = stationLabel(current.current, station, t)
+    setConfirmation({ title: t('service.stationExists', { station: name }), body: t('service.reusePrompt', { station: name }),
+      confirmLabel: t(inspect ? 'service.viewExistingStation' : 'service.useStation'), action: use,
+      alternative: { label: t('service.createSeparateStation'), action: create } })
+  }
+
+  function addStop(id: string, point?: MapTarget['point'], tolerance = 0, skipStationOffer = false) {
     const active = draftCurrent.current
     if (!active || active.stops.includes(id)) return
     const state = current.current
@@ -235,17 +260,24 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       setNotice({ key: 'error.invalidStops', error: true })
       return
     }
-    let next = state.hongKong ? appendHongKongStop(state, active, id, point, tolerance) : appendDraftStop(active, id, point)
+    let next = active.replacement !== undefined ? replaceDraftStop(active, id, point) :
+      state.hongKong ? appendHongKongStop(state, active, id, point, tolerance) : appendDraftStop(active, id, point)
     if (state.hongKong && point) {
       const city = getCity(state.cityId)
+      const candidate = next.proposed[id]
+      const match = !skipStationOffer && !stationSiteError(city, point) && candidate && !stationSiteError(city, candidate) &&
+        existingMtrStationAt(candidate, state.stations.filter((station) => !active.stops.includes(station.id) &&
+          !state.lines.find((line) => line.id === active.id)?.stops.includes(station.id)))
+      if (match) {
+        offerExistingStation(match, () => addStop(match.id), () => addStop(id, point, tolerance, true))
+        return
+      }
       const siteError = stationSiteError(city, point)
         ?? stationPreview(city, state, roundPoint(next.proposed[id]), undefined, active.method).error
       if (siteError) { setNotice({ key: 'error.' + siteError, error: true }); return }
     }
     if (active.kind === 'draw' && !active.stops.length && !point && !active.pending.length) {
-      const line = extensionChoices(state, id)[0]
-      next = { ...next, anchor: id, id: line?.id, name: line?.name ?? '',
-        color: line?.color ?? active.color, automaticName: line ? line.automaticName : true }
+      next = { ...next, anchor: id }
     }
     editDraft(next)
   }
@@ -303,6 +335,11 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
         setNotice({ key: 'error.' + siteError, error: true })
         return
       }
+      const match = city.hongKong && !target.skipStationOffer && existingMtrStationAt(target.trackPoint ?? target.point, state.stations)
+      if (match) {
+        offerExistingStation(match, () => pick({ type: 'station', id: match.id }), () => clickMap({ ...target, skipStationOffer: true }), true)
+        return
+      }
       if (target.trackPoint && target.trackLines?.length) {
         const { trackPoint: point, trackLines: available } = target
         if (available.length > 1 || city.hongKong) setInsertion({ point, available, chosen: [available[0]] })
@@ -327,13 +364,19 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
     } else if (tool === 'line') {
       const active = draftCurrent.current
       if (!active) return
-      if (active.control) {
+      if (target.draggedStation) {
+        const error = stationSiteError(city, target.point) ?? stationSiteError(city, roundPoint(target.point))
+        if (error) { setNotice({ key: 'error.' + error, error: true }); return }
+        editDraft(moveDraftStation(active, target.draggedStation, target.point))
+      } else if (target.draggedControl) {
+        editDraft(editControl(active, target.draggedControl, target.point))
+      } else if (active.control) {
         editDraft(editControl(active, active.control, target.point))
       } else if (target.control && !target.shift && !active.placingStation) {
         editDraft({ ...active, control: target.control }, false)
       } else if (city.hongKong) {
         if (target.selection?.type === 'station' && !active.placingControl) addStop(target.selection.id)
-        else if (target.shift || active.placingStation) {
+        else if (target.shift || active.placingStation || active.replacement !== undefined) {
           addStop('draft-' + nextDraftId.current++, target.point, target.surveyTolerance)
         } else if (surfaceAt(target.point) === 'outside') setNotice({ key: 'error.outsideArea', error: true })
         else if (active.kind === 'edit' && active.insertion === undefined && active.stops.length >= 2 && !active.alignmentEnds?.head && !active.alignmentEnds?.tail) {
@@ -386,7 +429,9 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
     setSelection(undefined)
     setTab('network')
     pausedUndo.current = []
+    pausedRedo.current = []
     setUndoSize(0)
+    setRedoSize(0)
     reachedMilestones.current = next.milestones.length
     cancel()
     replaceGame(next)
@@ -446,7 +491,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
         commitLine()
       } else if ((event.ctrlKey || event.metaKey) && key === 'z') {
         event.preventDefault()
-        undo()
+        stepHistory(event.shiftKey)
       } else if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         if (key === 'v') changeTool('select')
         if (key === 's') changeTool('station')
@@ -479,8 +524,9 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       menu={mainMenu} settings={() => setDialog('settings')} help={() => setDialog('help')}/>
     <Indicators game={game} metrics={metrics}/>
     <main className="workspace" aria-label={t('app.board')}>
-      <Tools tool={tool} playing={playing} select={changeTool} undo={undo}
-        canUndo={draft ? draftUndo.current.length > 0 : speed === 0 && undoSize > 0} canCancel={showHint} cancel={cancel}/>
+      <Tools tool={tool} playing={playing} select={changeTool} undo={() => stepHistory()} redo={() => stepHistory(true)}
+        canUndo={draft ? draftUndo.current.length > 0 : undoSize > 0}
+        canRedo={draft ? draftRedo.current.length > 0 : redoSize > 0} canCancel={showHint} cancel={cancel}/>
       <section className="map-panel" aria-label={t('map.name')}>
         <CityMap key={session} game={game} reach={reach} layer={settings.layer} tool={tool}
           setLayer={(layer) => setSettings((value) => ({ ...value, layer }))} selected={selection}
@@ -533,6 +579,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
                 title: t('line.removeTitle'), body: t('line.removeBody'), destructive: true,
                 action: () => { if (act({ type: 'removeLine', id: line.id })) back() },
               })}/>
+            : selection?.type === 'track' ? <SharedTrackPanel game={game} id={selection.id} back={back} pickLine={selectLine}/>
             : train ? <TrainPanel game={game} train={train} playing={playing} back={() => selectLine(train.lineId)} act={act}
               pickLine={() => selectLine(train.lineId)} sell={() => setConfirmation({
                 title: t('train.sellTitle'), body: t('train.sellBody', { cost: gameMoney(game, trainRefund(game), locale) }), destructive: true,
@@ -551,7 +598,8 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       save={() => { saveCurrent(true); setDialog(undefined) }} load={resume} reset={requestReset} menu={mainMenu}
       close={() => setDialog(undefined)}/>}
     {dialog === 'help' && <HelpDialog close={() => setDialog(undefined)} hongKong={Boolean(game.hongKong)}/>}
-    {confirmation && <ConfirmDialog title={confirmation.title} body={confirmation.body} destructive={confirmation.destructive}
+    {confirmation && <ConfirmDialog title={confirmation.title} body={confirmation.body} destructive={confirmation.destructive} confirmLabel={confirmation.confirmLabel}
+      alternative={confirmation.alternative && { label: confirmation.alternative.label, action: () => { setConfirmation(undefined); confirmation.alternative!.action() } }}
       close={() => setConfirmation(undefined)} onConfirm={() => { setConfirmation(undefined); confirmation.action() }}/>}
   </div>
 }

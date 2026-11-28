@@ -7,10 +7,13 @@ import { relocationQuote } from '../engine/actions.ts'
 import { allTrack, openEndOf, sectionKey, trackHits } from '../engine/alignment.ts'
 import { canAfford, HKD } from '../engine/economy.ts'
 import { clamp, distance } from '../engine/geometry.ts'
+import { existingMtrStationAt } from '../engine/hongKong.ts'
 import { stationCapacity, stationPreview, stationRadius, stationSiteError, waitingAt } from '../engine/network.ts'
 import { quoteInsertion, quoteLine, roundPoint, selectableInsertions, waterTrackEnds } from '../engine/planning.ts'
+import { railUsers } from '../engine/rails.ts'
 import { layers } from '../engine/save.ts'
-import { curveSpeedKmh, ENGINEERING, minimumRadius, pieceTangent, radiusStatus, tangentsAgree, trackColors, trackLength, trackPath, unitsToMeters } from '../engine/track.ts'
+import { curveSpeedKmh, ENGINEERING, minimumRadius, nearestOnTrack, offsetTrackPath, pieceTangent, radiusStatus, tangentsAgree, trackColors,
+  trackCurves, trackLength, trackPath, unitsToMeters } from '../engine/track.ts'
 import { trainPosition } from '../engine/trains.ts'
 import type { GameState, Layer, Point, Station, TrackMethod, TrackSection } from '../engine/types.ts'
 import type { networkReach } from '../engine/analytics.ts'
@@ -18,11 +21,11 @@ import { AnimatedTrain } from './AnimatedTrain.tsx'
 import { BaseMap, layerColors } from './BaseMap.tsx'
 import { cartography } from './cartography.ts'
 import { DrawControls, EngineeringLegend, MethodSelector } from './Engineering.tsx'
-import { gameMoney, lineCode, lineLabel, number, stationLabel, stationNameAt, trainCode } from './format.ts'
+import { curveRadiusText, gameMoney, lineCode, lineLabel, number, stationLabel, stationNameAt, trainCode } from './format.ts'
 import { HongKongAnalysis } from './HongKongAnalysis.tsx'
 import { HongKongMap } from './HongKongMap.tsx'
-import { appendDraftStop, appendHongKongStop, draftDesign, draftPosition, editControl } from './interaction.ts'
-import type { LineDraft, MapTarget, Selection, Tool } from './interaction.ts'
+import { appendDraftStop, appendHongKongStop, draftDesign, draftPosition, editControl, moveDraftStation } from './interaction.ts'
+import type { ControlSelection, LineDraft, MapTarget, Selection, Tool } from './interaction.ts'
 
 interface Props {
   game: GameState
@@ -49,7 +52,8 @@ interface Props {
 }
 
 interface Camera extends Point { zoom: number }
-type Gesture = { x: number; y: number; camera: Camera; pointer: number; kind: 'pan' | 'draw'; last?: string }
+type Gesture = { x: number; y: number; camera: Camera; pointer: number; kind: 'pan' | 'draw' | 'edit'; last?: string;
+  station?: string; control?: ControlSelection; moved?: boolean }
 const extent = (city: { width: number; height: number }): Camera => ({ x: city.width * 0.5, y: city.height * 0.5, zoom: 1 })
 
 export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggleView, tool, selected, draft, draftQuote, insertionPoint,
@@ -67,6 +71,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const [size, setSize] = useState({ width: 1100, height: 660 })
   const [camera, setCamera] = useState<Camera>(() => extent(city))
   const [hover, setHover] = useState<{ world: Point; screen: Point }>()
+  const [focusedStation, setFocusedStation] = useState<string>()
   const [panning, setPanning] = useState(false)
   const baseScale = hongKong ? Math.max(size.width / (city.width * 1.33), size.height / (city.height * .95)) :
     Math.max(size.width / (city.width + 18), size.height / (city.height + 18))
@@ -114,6 +119,12 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const reset = () => { setCamera(extent(city)); setHover(undefined) }
   const stations = new Map(game.stations.map((station) => [station.id, station]))
   const lineById = new Map(game.lines.map((line) => [line.id, line]))
+  const selectedLine = selected?.type === 'line' ? lineById.get(selected.id) : undefined
+  const sharedRails = [...railUsers(game.lines)].flatMap(([id, lines]) => {
+    const section = game.infrastructure?.[id]
+    return section && lines.length > 1 ? [{ id, lines, section }] : []
+  })
+  const sharedIds = new Set(sharedRails.map(({ id }) => id))
   const linesAt = new Map<string, GameState['lines']>()
   for (const line of game.lines) for (const id of line.stops) {
     const list = linesAt.get(id) ?? []
@@ -126,18 +137,20 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     return line && point ? [{ train, line, point }] : []
   })
   const selectedStation = selected?.type === 'station' ? stations.get(selected.id) : undefined
-  const handles = draft?.kind === 'edit' ? (draftQuote?.rows ?? []).flatMap(({ section }) => {
+  const handles = draft?.kind === 'edit' ? (draftQuote?.rows ?? []).flatMap(({ section, reused }) => {
     const key = sectionKey(section.from, section.to)
+    if (reused && !lineById.get(draft.id ?? '')?.track.some((entry) => entry.from === section.from && entry.to === section.to)) return []
     const controls = section.controls.map((point, index) => ({ point, key, index }))
     if (hongKong) for (const { side, point } of waterTrackEnds(section)) {
       controls.push({ point, key, index: side === 'head' ? -1 : section.controls.length })
     }
     return controls
-  }) : []
+  }) : draft ? [...Object.entries(draft.controls).flatMap(([key, points]) => points.map((point, index) => ({ key, point, index }))),
+    ...draft.pending.map((point, index) => ({ key: 'pending', point, index }))] : []
 
   function selectableControl(point: Point) {
     let nearest: typeof handles[number] | undefined
-    let closest = 12 / scale
+    let closest = (draft?.kind === 'draw' ? 5.5 : 12) / scale
     for (const handle of handles) {
       const gap = distance(handle.point, point)
       if (gap <= closest) { nearest = handle; closest = gap }
@@ -155,18 +168,20 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     let near: Station | undefined
     let closest = hongKong && tool !== 'select' ? Math.min(13, px / scale) : px / scale
     for (const station of game.stations) {
-      const gap = distance(station.position, point)
+      const gap = distance(draft?.stationMoves?.[station.id] ?? station.position, point)
       if (gap < closest) { near = station; closest = gap }
     }
     return near
   }
 
   function targetAt(point: Point): Selection {
-    const station = nearestStation(point)
+    const station = nearestStation(point, hongKong && tool === 'select' ? 10 : 14)
     if (station) return { type: 'station', id: station.id }
     const train = trains.find((entry) => distance(point, entry.point) <= 12 / scale)
     if (train) return { type: 'train', id: train.train.id }
     const hit = trackHits(game.lines, point, 9 / scale)[0]
+    const shared = sharedRails.find(({ section }) => (nearestOnTrack(section.pieces, point)?.distance ?? Infinity) <= (hit?.distance ?? 9 / scale) + 0.01)
+    if (shared) return { type: 'track', id: shared.id }
     if (hit) return { type: 'line', id: hit.lineId }
     const district = districtAt(city, point)
     return district.score < 1.23 ? { type: 'district', id: district.area.id } : undefined
@@ -175,12 +190,18 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   function pointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     if (event.button > 2 || gesture.current) return
     const point = coordinates(event).world
-    const marker = tool === 'line' && !event.shiftKey && !draft?.control && !draft?.placingControl && event.button === 0 && !selectableControl(point)
-      ? nearestStation(point) : undefined
+    const primary = event.button === 0 && !event.shiftKey && !draft?.control
+    const control = primary && tool === 'line' && !draft?.placingStation && draft?.replacement === undefined ? selectableControl(point) : undefined
+    const marker = primary && (tool === 'line' || tool === 'move') && !control && !draft?.placingControl ? nearestStation(point) : undefined
+    const planned = primary && tool === 'line' && draft && !control ? draft.stops.find((id) =>
+      draft.proposed[id] && distance(draft.proposed[id], point) * scale < 9) : undefined
+    const movable = planned ?? (marker && (tool === 'move' ? selectedStation?.id === marker.id :
+      hongKong && draft?.kind === 'edit' && draft.stops.includes(marker.id)) ? marker.id : undefined)
+    const kind = control || movable ? 'edit' : marker && tool === 'line' ? 'draw' : 'pan'
     event.currentTarget.focus({ preventScroll: true })
-    gesture.current = { x: event.clientX, y: event.clientY, camera, pointer: event.pointerId, kind: marker ? 'draw' : 'pan', last: marker?.id }
+    gesture.current = { x: event.clientX, y: event.clientY, camera, pointer: event.pointerId, kind, last: marker?.id, station: movable, control }
     event.currentTarget.setPointerCapture(event.pointerId)
-    if (marker) addStop(marker.id)
+    if (kind === 'draw' && marker) addStop(marker.id)
   }
 
   function pointerMove(event: ReactPointerEvent<SVGSVGElement>) {
@@ -191,6 +212,11 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
       return
     }
     if (current.pointer !== event.pointerId) return
+    if (current.kind === 'edit') {
+      current.moved ||= Math.hypot(event.clientX - current.x, event.clientY - current.y) >= (current.control ? 2 : 4)
+      setHover(location)
+      return
+    }
     if (current.kind === 'draw') {
       setHover(location)
       const station = nearestStation(location.world, 18)
@@ -216,6 +242,10 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     if (!current || current.pointer !== event.pointerId) return
     gesture.current = undefined
     setPanning(false)
+    if (!cancelled && current.kind === 'edit' && current.moved) {
+      clickMap({ point: coordinates(event).world, draggedStation: current.station, draggedControl: current.control })
+      return
+    }
     if (cancelled || current.kind === 'draw' || event.button !== 0 ||
         Math.hypot(event.clientX - current.x, event.clientY - current.y) >= 5) return
     const { world } = coordinates(event)
@@ -242,7 +272,10 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const oldDraftLine = draft && lineById.get(draft.id ?? '')
   const ghostId = 'hover-preview'
   let hoverDraft: LineDraft | undefined
-  if (draft && hover && !panning && (draft.stops.length || hongKong && draft.pending.length)) {
+  const dragging = gesture.current?.kind === 'edit' && gesture.current.moved ? gesture.current : undefined
+  if (draft && hover && dragging?.station) hoverDraft = moveDraftStation(draft, dragging.station, hover.world)
+  else if (draft && hover && dragging?.control) hoverDraft = editControl(draft, dragging.control, hover.world)
+  else if (draft && hover && !panning && (draft.stops.length || hongKong && draft.pending.length)) {
     const last = draft.pending.at(-1) ?? draftPosition(game, draft, draft.stops.at(-1)!)
     if (draft.control) hoverDraft = editControl(draft, draft.control, hover.world)
     else if ((!last || distance(last, hover.world) > 13 / scale) && (draft.kind === 'draw' || draft.insertion !== undefined) &&
@@ -254,10 +287,13 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   }
   const hoverQuote = hoverDraft ? quoteLine(game, draftDesign(game, hoverDraft), oldDraftLine) : undefined
   const drawnQuote = hoverQuote ?? draftQuote
-  const plannedStations = draftQuote?.newStations ?? []
-  const candidatePosition = draft && hover && !panning && !draft.control && !hoveredStation
+  const drawnDraft = hoverDraft ?? draft
+  const plannedStations = drawnQuote?.newStations.filter((station) => station.id !== ghostId) ?? []
+  const candidatePosition = draft && hover && !panning && !draft.control && !hoveredStation && !dragging
     ? roundPoint(hoverDraft?.proposed[ghostId] ?? hover.world) : undefined
   const candidateSiteError = candidatePosition && (hoverSiteError ?? stationSiteError(city, candidatePosition))
+  const matchingStation = hongKong && hover && !hoveredStation && !hoverSiteError && !panning && !dragging && (tool === 'line' || tool === 'station')
+    ? existingMtrStationAt(candidatePosition ?? previewPoint ?? hover.world, game.stations.filter((station) => !draft?.stops.includes(station.id))) : undefined
   const plannedStationHit = hongKong ? Math.min(13, 11 / scale) : 11 / scale
   let candidateName: string | undefined
   if (candidatePosition && !candidateSiteError && !plannedStations.some((station) => distance(station.position, candidatePosition) < plannedStationHit)) {
@@ -278,6 +314,17 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const candidateAnchor = hover && hover.screen.x < 80 ? 'start' : hover && hover.screen.x > size.width - 80 ? 'end' : 'middle'
   const draftLabelPoints = draft ? draft.stops.map((id) => draft.proposed[id]).filter(Boolean) : []
   if (candidateName && candidatePosition) draftLabelPoints.push(candidatePosition)
+  const focusStation = stations.get(focusedStation ?? '')
+  const inspectedStation = !panning && !dragging && (tool === 'select' || tool === 'line') ? focusStation ?? hoveredStation ?? selectedStation : undefined
+  const inspectedLines = inspectedStation ? linesAt.get(inspectedStation.id) ?? [] : []
+  const movedStations = drawnQuote?.relocation?.game?.stations
+  const moveCurves = moveQuote?.tracks ? [...moveQuote.tracks.values()].flat() : []
+  const displayedRails = new Set(drawnQuote?.rows.flatMap(({ section }) => section.rails?.map((rail) => rail.id) ?? []))
+  const affectedCurves = drawnQuote?.relocation?.changed && drawnQuote.relocation.game?.infrastructure ?
+    [...drawnQuote.relocation.changed].filter((id) => !displayedRails.has(id)).map((id) => drawnQuote.relocation!.game!.infrastructure![id]) : []
+  const curveSections = draft ? [...(drawnQuote?.rows.map(({ section }) => section) ?? []), ...affectedCurves] : moveCurves
+  const stationPriority = (id: string) => inspectedStation?.id === id || selectedStation?.id === id ? 3 :
+    selectedLine?.stops.includes(id) ? 2 : (linesAt.get(id)?.length ?? 0) > 1 ? 1 : 0
 
   function nearestDraftPoint(point: Point) {
     let nearest: Point | undefined
@@ -359,7 +406,9 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
       <g className="rail-overlay" pointerEvents="none">
         {game.lines.map((line) => {
           const sections = allTrack(line)
-          const path = sections.map((section) => trackPath(section.pieces)).join('')
+          const independent = sections.flatMap((section) => section.rails?.some((rail) => sharedIds.has(rail.id)) ?
+            section.rails.flatMap((rail) => game.infrastructure?.[rail.id] && !sharedIds.has(rail.id) ? [game.infrastructure[rail.id]] : []) : [section])
+          const path = independent.map((section) => trackPath(section.pieces)).join('')
           const highlight = selected?.type === 'line' && selected.id === line.id
           const dim = draft ? draft.id === line.id ? 0.24 : 0.56 : 1
           const daily = game.hongKong?.lineActivity[line.id]?.boarded ?? 0
@@ -368,13 +417,13 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             <path d={path} stroke="#f9fcf5" strokeWidth={highlight ? 12 : 9.5} vectorEffect="non-scaling-stroke" />
             {layer !== 'engineering' ? <path data-testid="committed-track" data-line={line.id} d={path}
               stroke={line.color} strokeWidth={activeWidth} vectorEffect="non-scaling-stroke" strokeDasharray={!line.track.length || line.suspended ? '6 4' : undefined} /> :
-              sections.map((section, index) => {
-                const following = sections[index + 1] ?? (line.circular ? sections[0] : undefined)
+              independent.map((section, index) => {
+                const following = independent[index + 1] ?? (line.circular ? independent[0] : undefined)
                 const junction = following && !tangentsAgree(pieceTangent(section.pieces.at(-1)!, true), pieceTangent(following.pieces[0]))
                 const legacyCurve = section.legacy && minimumRadius(section.pieces) === 0
                 return <g key={sectionKey(section.from, section.to)}>
                   {section.pieces.map((piece, position) => <path key={position} d={trackPath([piece])}
-                    stroke={trackColors[radiusStatus(legacyCurve ? 0 : minimumRadius([piece]))]}
+                    stroke={trackColors[radiusStatus(legacyCurve ? 0 : minimumRadius([piece]), hongKong)]}
                     strokeWidth={highlight ? 7.5 : 5.6} vectorEffect="non-scaling-stroke" />)}
                   {junction && <circle cx={section.pieces.at(-1)!.to.x} cy={section.pieces.at(-1)!.to.y}
                     r={11 / scale} stroke={trackColors.invalid} strokeWidth="3.3" vectorEffect="non-scaling-stroke"/>}
@@ -386,24 +435,40 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             {draft?.id !== line.id && sections.flatMap(waterEndMarkers)}
           </g>
         })}
+        {sharedRails.map(({ id, section, lines }) => {
+          const highlight = selected?.type === 'track' && selected.id === id || lines.some((line) => line.id === selectedLine?.id)
+          const lane = Math.min(4, 16 / lines.length)
+          return <g key={id} role="button" tabIndex={0} aria-label={t('service.sharedTrack')} data-testid="shared-track"
+            data-track={id} onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              event.stopPropagation()
+              clickMap({ point: section.pieces[0].from, selection: { type: 'track', id } })
+            }} fill="none" strokeLinecap="round" opacity={draft ? .64 : 1}>
+            <path d={trackPath(section.pieces)} stroke={highlight ? '#daf0dc' : '#fbfcf4'} strokeWidth={lane * lines.length + (highlight ? 8 : 4)} vectorEffect="non-scaling-stroke" />
+            {lines.map((line, index) => <path key={line.id} d={offsetTrackPath(section.pieces, (index - (lines.length - 1) / 2) * lane / scale)}
+              stroke={line.color} strokeWidth={lane - (line.id === selectedLine?.id ? 0 : .65)} vectorEffect="non-scaling-stroke" data-service={line.id}/>)}
+          </g>
+        })}
         {draft && <g fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5.5">
-          {drawnQuote?.rows.map(({ section, radius, added }) => <path key={sectionKey(section.from, section.to)}
+          {drawnQuote?.rows.map(({ section, radius, added, reused }) => <path key={sectionKey(section.from, section.to)}
             data-testid={added ? 'planned-track' : undefined} d={trackPath(section.pieces)}
-            stroke={added && radiusStatus(radius) === 'invalid' ? trackColors.invalid : draft.color}
-            strokeDasharray={added ? '10 5' : undefined} opacity={added ? 1 : 0.65} vectorEffect="non-scaling-stroke" />)}
+            stroke={added && radiusStatus(radius, hongKong) === 'invalid' ? trackColors.invalid : draft.color}
+            strokeDasharray={reused ? '3 4' : added ? '10 5' : undefined} opacity={added || reused ? 1 : 0.65}
+            data-reused={reused ? 'true' : undefined} vectorEffect="non-scaling-stroke" />)}
           {hongKong && !drawnQuote?.rows.length && draft.pending.length > 0 && <circle cx={draft.pending[0].x}
             cy={draft.pending[0].y} r={6 / scale} fill="#fffff5" stroke={draft.color} strokeWidth="2" vectorEffect="non-scaling-stroke"/>}
-          {handles.map(({ point, key, index }) => <rect key={key + index} data-testid="track-control"
-            x={point.x - 4.5 / scale} y={point.y - 4.5 / scale} width={9 / scale} height={9 / scale}
-            transform={'rotate(45 ' + point.x + ' ' + point.y + ')'} fill={draft.control?.key === key && draft.control.index === index ? draft.color : '#fffef5'}
-            stroke={draft.color} strokeWidth="1.8" vectorEffect="non-scaling-stroke"/>)}
-          {Object.values(draft.controls).flat().concat(draft.pending).map((point, index) => draft.kind === 'draw' &&
-            <rect key={index} data-testid="track-control" x={point.x - 4 / scale} y={point.y - 4 / scale}
-              width={8 / scale} height={8 / scale} transform={'rotate(45 ' + point.x + ' ' + point.y + ')'}
-              fill="#fffdf6" stroke={draft.color} strokeWidth="1.7" vectorEffect="non-scaling-stroke"/>)}
+          {handles.map(({ point, key, index }) => {
+            const activeControl = dragging?.control ?? draft.control
+            const active = activeControl?.key === key && activeControl.index === index
+            const shown = active ? hover?.world ?? point : point
+            return <rect key={key + index} data-testid="track-control" x={shown.x - 4.5 / scale} y={shown.y - 4.5 / scale}
+              width={9 / scale} height={9 / scale} transform={'rotate(45 ' + shown.x + ' ' + shown.y + ')'}
+              fill={active ? draft.color : '#fffef5'} stroke={draft.color} strokeWidth="1.8" vectorEffect="non-scaling-stroke"/>
+          })}
           {drawnQuote?.rows.flatMap(({ section }) => waterEndMarkers(section))}
           {draft.stops.map((id, index) => {
-            const point = draft.proposed[id]
+            const point = drawnDraft?.proposed[id]
             if (!point) return null
             const station = plannedStations.find((station) => station.id === id)
             const name = station ? stationLabel(game, station, t) : stationNameAt(game, point, t)
@@ -421,28 +486,50 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             r={markerSize} className={candidateSiteError || hoverQuote?.error && hoverQuote.error !== 'needsStops' ? 'ghost-station invalid' : 'ghost-station'}
             vectorEffect="non-scaling-stroke" />}
         </g>}
+        {hongKong && curveSections.flatMap((section, sectionIndex) => trackCurves(section.pieces).map((curve, index) => {
+          const restricted = curve.radius < ENGINEERING.restrictedRadius
+          const value = curveRadiusText(curve.radius, ENGINEERING.restrictedRadius, locale)
+          const label = t(restricted ? 'service.restrictedCurve' : 'service.curveRadius', { value })
+          return <g key={sectionIndex + ':' + index} data-testid="curve-radius" data-radius={curve.radius} data-restricted={restricted}>
+            <title>{label}</title>
+            {restricted && <path d={trackPath(curve.pieces)} fill="none" stroke={trackColors.restricted} strokeWidth="4.2"
+              strokeLinecap="round" vectorEffect="non-scaling-stroke"/>}
+            <text x={curve.point.x} y={curve.point.y + (index % 2 ? 17 : -12) / scale} textAnchor="middle"
+              fontSize={11 / scale} className={'station-name curve-label' + (restricted ? ' restricted' : '')}>{value} m</text>
+          </g>
+        }))}
         {trains.map(({ train, line }) =>
           <AnimatedTrain key={train.id} train={train} line={line} station={stations.get(line.stops[train.at])!} scale={scale}/>)}
       </g>
-      {game.stations.map((station) => {
+      {game.stations.slice().sort((a, b) => stationPriority(b.id) - stationPriority(a.id)).map((savedStation) => {
+        const original = movedStations?.find((station) => station.id === savedStation.id) ?? savedStation
+        const station = draft?.stationNames?.[original.id] ? { ...original, names: draft.stationNames[original.id] } : original
         const lines = linesAt.get(station.id) ?? []
         const shared = lines.length > 1
-        const transfer = shared && station.interchange
+        const upcomingTransfer = drawnQuote?.interchanges.some((entry) => entry.id === station.id)
+        const transfer = shared && station.interchange || Boolean(upcomingTransfer)
+        const rimLines = upcomingTransfer && draft ? [...lines, { id: 'draft', color: draft.color }] : lines
         const order = draft?.stops.indexOf(station.id) ?? -1
         const active = selectedStation?.id === station.id
+        const focused = focusedStation === station.id
+        const onSelectedLine = selectedLine?.stops.includes(station.id)
         const color = order >= 0 ? draft!.color : shared ? '#264b49' : lines[0]?.color ?? '#44736c'
         const pressure = waitingAt(game, station.id) / stationCapacity(station)
         const label = stationLabel(game, station, t)
-        const { x, y } = station.position
+        const { x, y } = drawnDraft?.stationMoves?.[station.id] ?? station.position
         const width = Math.min(140, 22 + label.length * 6.3) / scale
         const box = { left: x - width / 2, right: x + width / 2, top: y - 28 / scale, bottom: y - 8 / scale }
         const clear = !stationLabels.some((item) => item.left < box.right && item.right > box.left && item.top < box.bottom && item.bottom > box.top)
-        const visible = active || hoveredStation?.id === station.id || order >= 0 || (!draft &&
-          (hongKong ? clear && (scale > .94 || game.stations.length < 22) : scale > .94))
+        const visible = active || focused || hoveredStation?.id === station.id || order >= 0 || (!draft && clear &&
+          (onSelectedLine || (hongKong ? scale >= .4 || game.stations.length < 22 : scale > .94)))
         if (visible) stationLabels.push(box)
         const flow = game.stationActivity[station.id]
-        return <g key={station.id} role="button" tabIndex={0} aria-label={label} data-testid="map-station"
-          data-id={station.id} transform={'translate(' + x + ' ' + y + ')'} className="map-station"
+        const rim = markerSize + 1.8 / scale
+        const circumference = 2 * Math.PI * rim
+        const serviceLabel = lines.map((line) => lineLabel(line, t, false, game)).join(' / ')
+        return <g key={station.id} role="button" tabIndex={0} aria-label={label} aria-describedby={'station-services-' + station.id} data-testid="map-station"
+          data-id={station.id} data-interchange={transfer} data-highlighted={!!onSelectedLine} data-lines={lines.map((line) => line.id).join(' ')}
+          transform={'translate(' + x + ' ' + y + ')'} className="map-station" onFocus={() => setFocusedStation(station.id)} onBlur={() => setFocusedStation(undefined)}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' && event.key !== ' ') return
             event.preventDefault()
@@ -450,16 +537,20 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
             if (tool === 'line') addStop(station.id)
             else clickMap({ point: station.position, selection: { type: 'station', id: station.id } })
           }}>
+          <desc id={'station-services-' + station.id}>{serviceLabel || t('service.unserved')}</desc>
           <circle r={hongKong ? 14 / scale : Math.max(14, 14 / scale)} fill="transparent" />
           {layer === 'flow' && flow && flow.boarded + flow.alighted > 0 && <circle r={(12 + Math.min(18, Math.sqrt((flow.boarded + flow.alighted) / 35))) / scale}
             fill={chartColor} opacity=".28" stroke={chartColor} strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
           {layer === 'congestion' && pressure > 0 && <circle r={(22 + pressure * 36) / scale}
             fill={chartColor} opacity={0.18 + pressure * 0.33} stroke={chartColor} strokeWidth="1.6" />}
-          {(active || hoveredStation?.id === station.id) && <circle r={markerSize + 6 / scale} fill="#b5e4d1"
-            stroke={color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />}
+          {(active || focused || onSelectedLine || hoveredStation?.id === station.id) && <circle r={markerSize + 6 / scale} fill="#b5e4d1"
+            stroke={onSelectedLine ? selectedLine?.color : color} strokeWidth={onSelectedLine ? '2.2' : '1.2'} vectorEffect="non-scaling-stroke" />}
           <circle r={markerSize} fill="#fffff9" stroke={color} strokeWidth={transfer ? 3 : 2.4} vectorEffect="non-scaling-stroke" />
           {shared && !transfer && <circle r={markerSize * 0.49} fill={lines[0].color} />}
           {transfer && <circle r={markerSize * 0.5} fill="none" stroke={color} strokeWidth="1.35" vectorEffect="non-scaling-stroke" />}
+          {transfer && rimLines.map((line, index) => <circle key={line.id} r={rim} fill="none" stroke={line.color} strokeWidth={2.7 / scale}
+            strokeDasharray={`${Math.max(circumference / rimLines.length - 1.5 / scale, .1)} ${circumference}`}
+            strokeDashoffset={-circumference * index / rimLines.length} transform="rotate(-90)"/>)}
           {order >= 0 && <text y={0.55 / scale} textAnchor="middle" dominantBaseline="central"
             fontSize={9.5 / scale} fill={draft!.color} className="station-order">{order + 1}</text>}
           {pressure >= 0.83 && <circle cx={markerSize * 0.92} cy={-markerSize * 0.92} r={3.2 / scale}
@@ -495,7 +586,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     </div>}
     {hongKong && tool === 'station' && !insertionPoint && <div className="station-method"><MethodSelector value={stationMethod} change={setStationMethod}/></div>}
     <div className="map-mapkey">
-      {layer === 'engineering' ? <EngineeringLegend/> : layer === 'standard' ? <div className="map-scale" aria-hidden="true">
+      {layer === 'engineering' ? <EngineeringLegend hongKong={hongKong}/> : layer === 'standard' ? <div className="map-scale" aria-hidden="true">
         <span style={{ width: scaleDistance * scale }}>{t('map.meters', { value: unitsToMeters(scaleDistance) })}</span>
       </div> : <div className="layer-key" style={{ '--layer-color': chartColor } as React.CSSProperties}>
         <span>{t('map.low')}</span><i /><span>{t('map.high')}</span>
@@ -518,6 +609,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
       style={{ left: clamp(hover.screen.x + 20, 8, Math.max(8, size.width - 218)),
         top: clamp(hover.screen.y + 20, 8, Math.max(8, size.height - 126)) }}>
       {!previewSiteError && <strong>{trackInsertion.length ? t('engineering.insertStation') : stationNameAt(game, previewPoint!, t)}</strong>}
+      {matchingStation && <span>{t('service.stationExists', { station: stationLabel(game, matchingStation, t) })}</span>}
       {previewError ? <span>{t('error.' + previewError)}</span> : <>
         <span>{t('station.servedEstimate', { population: number(preview.population, locale), jobs: number(preview.jobs, locale) })}</span>
         <b>{gameMoney(game, previewCost, locale)}</b>
@@ -528,10 +620,21 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
         top: clamp(hover.screen.y + 20, 8, Math.max(8, size.height - 126)) }}>
       <span>{t('error.' + candidateSiteError)}</span>
     </div>}
-    {tool === 'select' && !panning && hover && hoveredStation && layer !== 'engineering' && <div className="map-hover-label"
-      style={{ left: clamp(hover.screen.x + 12, 8, Math.max(8, size.width - 155)), top: Math.min(hover.screen.y + 15, size.height - 44) }}>
-      {linesAt.get(hoveredStation.id)?.map((line) => <span style={{ color: line.color }} key={line.id}>{lineCode(line)}</span>)}
-      {t('station.waitingShort', { count: waitingAt(game, hoveredStation.id) })}
+    {hover && draft && matchingStation && !candidateSiteError && <div className="map-build-tip service-tip"
+      style={{ left: clamp(hover.screen.x + 15, 8, Math.max(8, size.width - 220)), top: clamp(hover.screen.y + 15, 8, size.height - 74) }}>
+      <strong>{t('service.stationExists', { station: stationLabel(game, matchingStation, t) })}</strong>
+    </div>}
+    {inspectedStation && <div className="map-build-tip service-tip" role="tooltip" data-testid="station-services"
+      style={{ left: clamp((inspectedStation.position.x - left) * scale + 16, 8, Math.max(8, size.width - 240)),
+        top: clamp((inspectedStation.position.y - top) * scale + 14, 8, Math.max(8, size.height - 148)) }}>
+      <strong>{stationLabel(game, inspectedStation, t)}</strong>
+      {inspectedStation.names && <span>{locale === 'zh-HK' ? inspectedStation.names.en : inspectedStation.names.zh}</span>}
+      {inspectedLines.length ? inspectedLines.map((line) => <span className="station-service" key={line.id}>
+        <i style={{ background: line.color }}>{lineCode(line)}</i><span>{lineLabel(line, t, false, game)}</span>
+      </span>) : <span>{t('service.unserved')}</span>}
+      {tool === 'line' && inspectedLines.some((line) => line.id !== draft?.id) && !draft?.stops.includes(inspectedStation.id) &&
+        <span>{t('service.transferOnConnect')}</span>}
+      {tool === 'select' && <span>{t('station.waitingShort', { count: waitingAt(game, inspectedStation.id) })}</span>}
     </div>}
     {hover && engineeringHit && !panning && <div className="map-build-tip engineering-inspection" style={{
       left: clamp(hover.screen.x + 16, 8, Math.max(8, size.width - 224)),

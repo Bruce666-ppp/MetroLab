@@ -5,7 +5,7 @@ import { chromium } from 'playwright-core'
 import { applyAction } from '../src/engine/actions.ts'
 import { exampleGame } from '../src/engine/example.ts'
 import { quoteLine } from '../src/engine/planning.ts'
-import { newGame } from '../src/engine/simulation.ts'
+import { newGame, SAVE_VERSION } from '../src/engine/simulation.ts'
 
 const executablePath = [process.env.METROLAB_CHROME,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -53,6 +53,13 @@ async function clickMap(page, point, shift = false) {
 async function moveMap(page, point) {
   const xy = await screen(page, point)
   await page.mouse.move(xy.x, xy.y)
+}
+
+async function dragMap(page, from, to) {
+  const a = await screen(page, from), b = await screen(page, to)
+  await page.mouse.move(a.x, a.y)
+  await page.mouse.down()
+  try { await page.mouse.move(b.x, b.y, { steps: 7 }) } finally { await page.mouse.up() }
 }
 
 async function ready(page) {
@@ -201,7 +208,7 @@ try {
   assert.ok(workers.some((worker) => worker.includes('simulation.worker')))
   let stored = await save(page)
   assert.equal(stored.cityId, 'hong-kong')
-  assert.equal(stored.version, 4)
+  assert.equal(stored.version, SAVE_VERSION)
   assert.equal(stored.lines[0].fare, 14)
   assert.equal(stored.today.fares, 14 * stored.today.arrived)
   assert.equal(stored.today.subsidy, 0)
@@ -288,11 +295,13 @@ try {
   assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
 
   const repair = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
+  repair.setDefaultTimeout(9000)
   const seed = newGame('sandbox', 'hong-kong')
   const alignment = (end) => ({ stops: [], name: 'Harbour survey', color: '#2864d4', circular: false,
     alignmentEnds: { head: [westShore, harbourBend, end].map(([x, y]) => ({ x, y })) } })
   const oldHarbourSave = applyAction(seed, { type: 'saveLine', design: alignment(kowloonShore) }).game
   assert.ok(oldHarbourSave)
+  oldHarbourSave.version = 4
   oldHarbourSave.lines[0].openEnds.head = quoteLine(seed, alignment(offshoreEnd)).rows[0].section
   await repair.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)),
     { savedAt: new Date().toISOString(), game: oldHarbourSave })
@@ -324,6 +333,142 @@ try {
   await exact(repair, 'Insert station').click()
   assert.equal(await stations(repair).count(), 1)
 
+  const sharing = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
+  sharing.setDefaultTimeout(9000)
+  const centralMtr = [642.7, 913.5], admiraltyMtr = [705.5, 942.3], wanChaiMtr = [785.4, 958.6]
+  const relocatedCentral = [622, 926], branchControl = [746, 955]
+  await open(sharing)
+  await sharing.getByRole('button', { name: /Sandbox mode/ }).click()
+  await exact(sharing, 'Draw line').click()
+  await clickMap(sharing, centralMtr, true)
+  await clickMap(sharing, admiraltyMtr, true)
+  await sharing.getByLabel('Line name', { exact: true }).fill('Island Spine')
+  await dock(sharing).getByRole('button', { name: 'Build alignment' }).click()
+  await stations(sharing).filter({ hasText: 'Central' }).first().focus()
+  const services = sharing.getByTestId('station-services')
+  await services.getByText('中環', { exact: true }).waitFor()
+  await services.getByText('Island Spine', { exact: true }).waitFor()
+
+  await exact(sharing, 'Draw line').click()
+  await clickMap(sharing, [657.3, 914], true)
+  await sharing.getByRole('dialog').getByRole('heading', { name: 'Central already exists' }).waitFor()
+  await exact(sharing, 'Use existing station').click()
+  await clickMap(sharing, admiraltyMtr)
+  await sharing.getByLabel('Line name', { exact: true }).fill('Harbour Connector')
+  assert.equal(await sharing.getByTestId('track-reuse-select').count(), 1)
+  await dock(sharing).getByRole('button', { name: 'Build alignment' }).click()
+  assert.equal(await sharing.getByTestId('shared-track').count(), 0)
+  assert.equal(await sharing.locator('[data-testid="map-station"][data-interchange="true"]').count(), 2)
+  const independent = await save(sharing)
+
+  await exact(sharing, 'Edit line').click()
+  const reuse = sharing.getByTestId('track-reuse-select')
+  const reuseValue = await reuse.locator('option').nth(1).getAttribute('value')
+  assert.ok(reuseValue)
+  await reuse.selectOption(reuseValue)
+  assert.match(await sharing.locator('.build-total').innerText(), /HKD\s*0/)
+  await sharing.getByTestId('construction-budget').getByText('Reused track length').waitFor()
+  await sharing.getByTestId('construction-budget').getByText('Added operating cost per hour (one train)').waitFor()
+  await exact(sharing, 'Save changes').click()
+  await sharing.getByTestId('shared-track').waitFor()
+  assert.equal(await sharing.locator('[data-testid="map-station"][data-highlighted="true"]').count(), 2)
+  assert.equal((await save(sharing)).funds, independent.funds)
+  await clickMap(sharing, [675, 927])
+  const sharedPanel = sharing.getByTestId('shared-track-panel')
+  await sharedPanel.waitFor()
+  await sharedPanel.getByText('Island Spine', { exact: true }).waitFor()
+  await sharedPanel.getByRole('button', { name: /Harbour Connector/ }).click()
+
+  await exact(sharing, 'Edit line').click()
+  await clickMap(sharing, wanChaiMtr, true)
+  await clickMap(sharing, branchControl)
+  await exact(sharing, 'Save changes').click()
+  const beforeEdit = await save(sharing)
+  const centralId = beforeEdit.stations.find((station) => station.names.en === 'Central').id
+  const centralMarker = sharing.locator(`[data-testid="map-station"][data-id="${centralId}"]`)
+  const originalPosition = await centralMarker.getAttribute('transform')
+  await exact(sharing, 'Edit line').click()
+  await dragMap(sharing, centralMtr, relocatedCentral)
+  const proposedPosition = await centralMarker.getAttribute('transform')
+  assert.notEqual(proposedPosition, originalPosition)
+  await exact(sharing, 'Undo').click()
+  assert.equal(await centralMarker.getAttribute('transform'), originalPosition)
+  await sharing.keyboard.press('Control+Shift+z')
+  assert.equal(await centralMarker.getAttribute('transform'), proposedPosition)
+  await exact(sharing, 'Undo').click()
+  assert.ok(await exact(sharing, 'Redo').isEnabled())
+  await sharing.getByLabel('Line name', { exact: true }).fill('Temporary Connector')
+  assert.ok(await exact(sharing, 'Redo').isDisabled())
+  await sharing.keyboard.press('Escape')
+  assert.equal(await centralMarker.getAttribute('transform'), originalPosition)
+  assert.deepEqual((await save(sharing)).lines, beforeEdit.lines)
+
+  await sharing.locator('.inspector').getByRole('button', { name: /Harbour Connector/ }).click()
+  await exact(sharing, 'Edit line').click()
+  await dragMap(sharing, centralMtr, relocatedCentral)
+  await dragMap(sharing, branchControl, [747, 970])
+  await exact(sharing, 'Rename Central').click()
+  await sharing.getByLabel('English station name').fill('Central Commons')
+  await sharing.getByLabel('Chinese station name').fill('中環匯')
+  await sharing.locator('.inline-station-rename').getByRole('button', { name: 'Apply station name' }).click()
+  await exact(sharing, 'Save changes').click()
+  const edited = await save(sharing)
+  const renamed = edited.stations.find((station) => station.id === centralId)
+  assert.deepEqual(renamed.names, { en: 'Central Commons', zh: '中環匯' })
+  assert.notDeepEqual(renamed.position, beforeEdit.stations.find((station) => station.id === centralId).position)
+  assert.notDeepEqual(edited.lines[1].track[1].controls, beforeEdit.lines[1].track[1].controls)
+  assert.equal(await sharing.getByTestId('shared-track').count(), 1)
+  await exact(sharing, 'Undo').click()
+  const undone = await save(sharing)
+  assert.deepEqual(undone, beforeEdit)
+  await exact(sharing, 'Redo').click()
+  assert.deepEqual(await save(sharing), edited)
+  await exact(sharing, '繁中').click()
+  await map(sharing).getByRole('button', { name: '中環匯', exact: true }).focus()
+  await services.getByText('中環匯', { exact: true }).waitFor()
+  await sharing.getByRole('button', { name: '重做', exact: true }).waitFor()
+  await screenshot(sharing, 'hong-kong-shared-track-zh')
+
+  const curves = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: 'en-US' })
+  curves.setDefaultTimeout(9000)
+  let curveSave = newGame('sandbox', 'hong-kong')
+  for (const [index, [x, y]] of [centralMtr, admiraltyMtr].entries()) {
+    const built = applyAction(curveSave, { type: 'buildStation', point: { x, y } }).game
+    assert.ok(built, `End ${index + 1} must be on playable land`)
+    curveSave = built
+  }
+  for (const metres of [399, 400, 460]) {
+    const built = applyAction(curveSave, { type: 'saveLine', design: { name: `Radius ${metres}`, color: '#287ab8', circular: false,
+      stops: curveSave.stations.map((station) => station.id) } }).game
+    assert.ok(built)
+    curveSave = built
+    const section = built.lines.at(-1).track[0]
+    const rail = built.infrastructure[section.rails[0].id]
+    const from = rail.pieces[0].from, to = rail.pieces.at(-1).to
+    const radius = metres / 10, dx = to.x - from.x, dy = to.y - from.y
+    const chord = Math.hypot(dx, dy), height = Math.sqrt(radius ** 2 - (chord / 2) ** 2)
+    const center = { x: (from.x + to.x) / 2 - dy * height / chord, y: (from.y + to.y) / 2 + dx * height / chord }
+    rail.pieces = section.pieces = [{ kind: 'arc', from, to, center, radius, sweep: 2 * Math.asin(chord / 2 / radius), method: 'underground' }]
+  }
+  await curves.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)),
+    { savedAt: new Date().toISOString(), game: curveSave })
+  await open(curves)
+  await curves.getByRole('button', { name: /Continue game/ }).click()
+  for (const metres of [399, 400, 460]) {
+    await curves.getByRole('button', { name: new RegExp(`Radius ${metres}`) }).click()
+    await exact(curves, 'Edit line').click()
+    const label = curves.getByTestId('curve-radius')
+    await label.waitFor()
+    assert.equal(Number(await label.getAttribute('data-radius')), metres)
+    assert.equal(await label.getAttribute('data-restricted'), String(metres === 399))
+    assert.ok(await exact(curves, 'Save changes').isEnabled())
+    assert.equal(await curves.getByTestId('curve-restrictions').count(), metres === 399 ? 1 : 0)
+    await exact(curves, 'Zoom in').click()
+    assert.equal(Number(await label.getAttribute('data-radius')), metres)
+    await exact(curves, 'Reset map view').click()
+    await curves.keyboard.press('Escape')
+  }
+
   const legacy = await browser.newPage({ viewport: { width: 1400, height: 860 }, locale: 'en-US' })
   const legacyGame = { ...exampleGame(), version: 3 }
   await legacy.addInitScript((slot) => localStorage.setItem('metrolab.save', JSON.stringify(slot)), { savedAt: new Date().toISOString(), game: legacyGame })
@@ -335,7 +480,7 @@ try {
   assert.equal(await legacy.locator('.base-map text').count(), 0)
 
   assert.deepEqual(errors, [])
-  console.log('Station exclusions, water crossing and legacy endpoint repair, station names, construction, operations, languages, mobile layout and Marlow migration passed.')
+  console.log('Station sites, bilingual station names, shared services, curve thresholds, edit history, operations, mobile layout and legacy saves passed.')
 } finally {
   await browser.close()
 }

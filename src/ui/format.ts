@@ -23,6 +23,11 @@ function numberFormat(locale: string, kind: 'number' | 'percent' | 'money' | 'co
 export function number(n: number, locale: string) {
   return numberFormat(locale, 'number').format(n)
 }
+
+export function curveRadiusText(radius: number, limit: number, locale: string) {
+  const digits = radius < limit && Math.round(radius) >= limit ? Math.max(1, Math.ceil(-Math.log10(limit - radius))) : 0
+  return digits ? radius.toLocaleString(locale, { maximumFractionDigits: digits }) : number(Math.round(radius), locale)
+}
 export function percent(n: number | undefined, locale: string) {
   return n === undefined ? '—' : numberFormat(locale, 'percent').format(n)
 }

@@ -1,8 +1,9 @@
 import { isWater } from './geometry.ts'
 import { densityAt, elevationAt, HONG_KONG, surfaceAt } from './hongKong.ts'
 import { HKD } from './hongKongConfig.ts'
+import { railUsers } from './rails.ts'
 import { allTrack, pieceLength, pointOnPiece } from './track.ts'
-import type { City, GameState, Point, Station, Totals, TrackMethod, TrackPiece } from './types.ts'
+import type { City, GameState, Point, Station, Totals, TrackMethod, TrackPiece, TrackSection } from './types.ts'
 
 export const INITIAL_BUDGET = 20_000_000
 export const TRAIN_PRICE = 520_000
@@ -105,6 +106,9 @@ export const upgradePrice = (station: Station) => station.method ? Math.round(HK
 
 export const netOperating = (totals: Totals) => totals.fares + totals.subsidy - totals.expenses
 
+export const trackUpkeepMinute = (section: TrackSection) => section.pieces.reduce((amount, piece) =>
+  amount + pieceLength(piece) * HKD.methods[piece.method ?? section.method ?? 'underground'].upkeepKmMinute / 100, 0)
+
 export function lineActivity(game: GameState, id: string) {
   if (!game.hongKong) return undefined
   return game.hongKong.lineActivity[id] ??= { boarded: 0, peak: 0, load: 0, departures: 0, fares: 0, expenses: 0 }
@@ -128,10 +132,19 @@ function operateHongKong(game: GameState) {
     postExpense(game, running ? HKD.crewMinute : HKD.idleTrainMinute, train.lineId)
   }
   const byStation = new Map<string, string[]>()
+  const maintenance = new Map<string, number>()
+  for (const [id, users] of railUsers(game.lines)) {
+    const section = game.infrastructure?.[id]
+    if (!section) continue
+    const share = trackUpkeepMinute(section) / users.length
+    for (const line of users) maintenance.set(line.id, (maintenance.get(line.id) ?? 0) + share)
+  }
+  let total = 0
   for (const line of game.lines) {
-    const maintenance = allTrack(line).reduce((total, section) => total + section.pieces.reduce((amount, piece) =>
-      amount + pieceLength(piece) * HKD.methods[piece.method ?? section.method ?? 'underground'].upkeepKmMinute / 100, 0), 0)
-    postExpense(game, Math.round(maintenance), line.id)
+    const upkeep = (maintenance.get(line.id) ?? 0) + allTrack(line).filter((section) => !section.rails).reduce((sum, section) =>
+      sum + trackUpkeepMinute(section), 0)
+    postExpense(game, Math.round(total + upkeep) - Math.round(total), line.id)
+    total += upkeep
     for (const id of line.stops) {
       const entries = byStation.get(id) ?? []
       entries.push(line.id)

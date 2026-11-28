@@ -2,12 +2,11 @@ import { getCity } from './city.ts'
 import { allTrack, headAnchor, openEndOf, tailAnchor } from './alignment.ts'
 import { canAfford, HKD, interchangePrice, measurePieces, salvage, spendCapital, trainPrice, trainRefund, upgradePrice } from './economy.ts'
 import { clamp } from './geometry.ts'
-import { hongKongName } from './hongKong.ts'
 import { pairsOf, stationPreview, stationSiteError } from './network.ts'
 import { abandonTrip, withdrawLineTrips } from './passengers.ts'
-import { maxNameLength, newStation, quoteInsertion, quoteLine, roundPoint } from './planning.ts'
+import { maxNameLength, newStation, planStationMoves, quoteInsertion, quoteLine, roundPoint } from './planning.ts'
 import type { PlanningError } from './planning.ts'
-import { nearestOnTrack, splitTrack, trackLength } from './track.ts'
+import { splitRailPathAt, splitSectionAt, synchronizeRails } from './rails.ts'
 import { makeTrain, remapTrain, resetTrain } from './trains.ts'
 import type { GameState, Point, Line, LineDesign, StationLevel, TrackMethod, TrackSection } from './types.ts'
 
@@ -41,12 +40,18 @@ export function relocationQuote(game: GameState, id: string, target: Point) {
   const station = game.stations.find((entry) => entry.id === id)
   if (!station) return { cost: 0, error: 'notFound' as const }
   const city = getCity(game.cityId)
+  if (city.hongKong && game.infrastructure) {
+    const moved = planStationMoves(game, { [id]: target })
+    if (!moved.game) return { cost: 0, error: moved.error ?? 'notFound' as const }
+    const affected = moved.game.lines.filter((line) => moved.affected.has(line.id))
+    return { cost: moved.cost, stations: moved.game.stations, tracks: new Map(affected.map((line) => [line.id, line.track])),
+      ends: new Map(affected.map((line) => [line.id, line.openEnds])), relocation: { game: moved.game, affected: moved.affected } }
+  }
   const siteError = city.hongKong && stationSiteError(city, target)
   if (siteError) return { cost: 0, error: siteError }
   const preview = stationPreview(city, game, point, id, station.method)
   if (preview.error) return { cost: 0, error: preview.error }
-  const stations = game.stations.map((entry) => entry.id === id ? { ...entry, position: point, district: preview.district,
-    ...(city.hongKong && !entry.namePinned ? { names: hongKongName(point, game.stations.filter((stop) => stop.id !== id)) } : {}) } : entry)
+  const stations = game.stations.map((entry) => entry.id === id ? { ...entry, position: point, district: preview.district } : entry)
   const affected = game.lines.filter((line) => line.stops.includes(id))
   const tracks = new Map<string, TrackSection[]>()
   const ends = new Map<string, Line['openEnds']>()
@@ -80,6 +85,7 @@ function removeStop(line: Line, stationId: string) {
     const head = line.track.find((section) => section.from === from && section.to === stationId)!
     const tail = line.track.find((section) => section.from === stationId && section.to === to)!
     return { from, to, pieces: head.pieces.concat(tail.pieces),
+      ...(head.rails && tail.rails ? { rails: [...head.rails, ...tail.rails] } : {}),
       controls: [...head.controls, head.pieces.at(-1)!.to, ...tail.controls],
       ...(head.legacy || tail.legacy ? { legacy: true as const } : {}),
       ...(head.method && head.method === tail.method ? { method: head.method } : {}),
@@ -92,6 +98,7 @@ function extendBeyondStop(from: string, to: string, first: TrackSection | undefi
   if (!first) return last && { ...last, from, to }
   if (!last) return { ...first, from, to }
   return { from, to, pieces: [...first.pieces, ...last.pieces],
+    ...(first.rails && last.rails ? { rails: [...first.rails, ...last.rails] } : {}),
     controls: [...first.controls, first.pieces.at(-1)!.to, ...last.controls],
     ...(first.method && first.method === last.method ? { method: first.method } : {}),
     builtCost: (first.builtCost ?? 0) + (last.builtCost ?? 0) }
@@ -108,11 +115,23 @@ function removeHongKongStop(line: Line, station: string) {
     openEnds: { ...open, tail: extendBeyondStop(stops.at(-1)!, tailAnchor, line.track.at(-1), open.tail) } }
 }
 
+function applyRelocation(game: GameState, relocated: GameState, affected: Set<string>) {
+  for (const train of game.trains) if (affected.has(train.lineId)) {
+    remapTrain(train, game.lines.find((line) => line.id === train.lineId)!, relocated.lines.find((line) => line.id === train.lineId)!)
+  }
+  game.stations = relocated.stations
+  game.lines = relocated.lines
+  game.infrastructure = relocated.infrastructure
+}
+
 export function applyAction(current: GameState, action: Action): Result {
   const city = getCity(current.cityId)
   const game = structuredClone(current)
   const finish = (id?: string, cost = 0): Result => {
     if (!canAfford(current, cost)) return { error: 'funds' }
+    if (city.hongKong && ['saveLine', 'moveStation', 'insertStation', 'removeStation', 'removeLine', 'removeSection'].includes(action.type)) {
+      synchronizeRails(game)
+    }
     if (cost) spendCapital(game, cost)
     game.revision++
     return { game, cost, id }
@@ -130,6 +149,10 @@ export function applyAction(current: GameState, action: Action): Result {
       if (action.type === 'moveStation') {
         const quote = relocationQuote(game, action.id, action.point)
         if (quote.error || !quote.stations || !quote.tracks) return { error: quote.error ?? 'notFound' }
+        if (quote.relocation) {
+          applyRelocation(game, quote.relocation.game, quote.relocation.affected)
+          return finish(action.id, quote.cost)
+        }
         game.stations = quote.stations
         for (const line of game.lines) {
           line.track = quote.tracks.get(line.id) ?? line.track
@@ -156,17 +179,9 @@ export function applyAction(current: GameState, action: Action): Result {
         const line = game.lines.find((entry) => entry.id === hit.lineId)!
         const previous = { ...line }
         const section = hit.section
-        const { head, tail } = splitTrack(section.pieces, hit.offset)
-        const controls = section.controls.filter((point) => {
-          const offset = nearestOnTrack(section.pieces, point)!.offset
-          return Math.abs(offset - hit.offset) > 0.01
-        })
-        const before = controls.filter((point) => nearestOnTrack(section.pieces, point)!.offset < hit.offset)
-        const after = controls.slice(before.length)
-        const headCost = section.builtCost === undefined ? undefined : Math.round(section.builtCost * hit.offset / trackLength(section.pieces))
-        const tailCost = headCost === undefined ? undefined : section.builtCost! - headCost
-        const first = { ...section, to: station.id, pieces: head, controls: before, ...(headCost === undefined ? {} : { builtCost: headCost }) }
-        const second = { ...section, from: station.id, pieces: tail, controls: after, ...(tailCost === undefined ? {} : { builtCost: tailCost }) }
+        const rails = splitRailPathAt(game, section, hit.offset, station.id)
+        const { first, second } = splitSectionAt(section, hit.offset, station.id)
+        if (rails) { first.rails = rails.head; second.rails = rails.tail }
         if (hit.end === 'head') {
           line.stops = [station.id, ...line.stops]
           line.openEnds = { ...line.openEnds, head: first }
@@ -194,8 +209,8 @@ export function applyAction(current: GameState, action: Action): Result {
       if (!station) return { error: 'notFound' }
       if (action.type === 'renameStation') {
         if (city.hongKong) {
-          const automatic = hongKongName(station.position, game.stations.filter((entry) => entry.id !== station.id))
-          station.names = { en: playerName(action.name) || automatic.en, zh: playerName(action.chinese ?? station.names?.zh ?? '') || automatic.zh }
+          const names = station.names!
+          station.names = { en: playerName(action.name) || names.en, zh: playerName(action.chinese ?? '') || names.zh }
           station.name = ''
           station.namePinned = Boolean(action.name.trim() || action.chinese?.trim())
         } else station.name = playerName(action.name)
@@ -232,10 +247,14 @@ export function applyAction(current: GameState, action: Action): Result {
       return finish(action.id)
     }
     case 'saveLine': {
-      const old = game.lines.find((line) => line.id === action.id)
+      let old = game.lines.find((line) => line.id === action.id)
       if (action.id && !old) return { error: 'notFound' }
       const quote = quoteLine(game, action.design, old)
       if (quote.error) return { error: quote.error }
+      if (quote.relocation?.game) {
+        applyRelocation(game, quote.relocation.game, quote.relocation.affected)
+        old = game.lines.find((line) => line.id === action.id)
+      }
       const ids = new Map(quote.newStations.map((station) => {
         const number = game.nextId++
         const id = 'station-' + number
@@ -243,6 +262,14 @@ export function applyAction(current: GameState, action: Action): Result {
         return [station.id, id]
       }))
       const resolved = (id: string) => ids.get(id) ?? id
+      if (city.hongKong) for (const id of action.design.stops) {
+        const names = action.design.stationNames?.[id]
+        const station = names && game.stations.find((entry) => entry.id === resolved(id))
+        if (station?.names && names) {
+          station.names = { en: playerName(names.en) || station.names.en, zh: playerName(names.zh) || station.names.zh }
+          station.namePinned = true
+        }
+      }
       for (const station of quote.interchanges) station.interchange = true
       const { stops, circular, color, name, automaticName } = action.design
       const route = quote.rows.map(({ section }) => {

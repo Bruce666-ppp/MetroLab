@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, CirclePlus, Flag, MapPin, MapPinPlus, Pencil,
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, Check, ChevronRight, CirclePlus, Flag, MapPin, MapPinPlus, Pencil,
   Play, Plus, Route, TrainFront, Trash2, X } from 'lucide-react'
 import { HEADWAYS, maxNameLength } from '../engine/actions.ts'
 import type { Action } from '../engine/actions.ts'
@@ -13,11 +13,12 @@ import { activityPopulation, demandDirections } from '../engine/hongKongDemand.t
 import { LINE_COLORS, nextStop, stationCapacity, stationPreview, trainLoad, waitingAt } from '../engine/network.ts'
 import { waterTrackEnds } from '../engine/planning.ts'
 import type { quoteInsertion, quoteLine } from '../engine/planning.ts'
-import { ENGINEERING, unitsPerMinuteToKmh, unitsToMeters } from '../engine/track.ts'
+import { railPathKey, railReuseOptions, railUsers } from '../engine/rails.ts'
+import { ENGINEERING, trackLength, unitsPerMinuteToKmh, unitsToMeters } from '../engine/track.ts'
 import { trainPosition } from '../engine/trains.ts'
 import type { GameState, Line, Station, Train } from '../engine/types.ts'
 import { LineBadge } from './Chrome.tsx'
-import { ConstructionBudget, MethodSelector } from './Engineering.tsx'
+import { ConstructionBudget, CurveRestrictions, MethodSelector } from './Engineering.tsx'
 import { districtLabel, gameMoney, lineLabel, number, percent, stationLabel, stationNameAt, timeLabel, trainCode } from './format.ts'
 import { editControl } from './interaction.ts'
 import type { LineDraft } from './interaction.ts'
@@ -270,13 +271,21 @@ export function LineEditor({ game, draft, quote, defaultName, change, cancel, co
 }) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage ?? 'en'
+  const [renameId, setRenameId] = useState<string>()
+  const [rename, setRename] = useState({ en: '', zh: '' })
   const old = game.lines.find((line) => line.id === draft.id)
   const extension = Boolean(old && draft.kind === 'draw')
+  const plannedStations = (quote.relocation?.game?.stations ?? game.stations).concat(quote.newStations)
+  const stationName = (id: string) => {
+    const station = plannedStations.find((entry) => entry.id === id)
+    if (station && draft.stationNames?.[id]) return stationLabel(game, { ...station, names: draft.stationNames[id] }, t)
+    return station ? stationLabel(game, station, t) : '—'
+  }
   function move(index: number, offset: number) {
     const stops = [...draft.stops]
     const [id] = stops.splice(index, 1)
     stops.splice(index + offset, 0, id)
-    change({ ...draft, stops, insertion: undefined })
+    change({ ...draft, stops, insertion: undefined, replacement: undefined })
   }
   const insertAt = draft.insertion !== undefined ? game.stations.find((station) => station.id === draft.stops[draft.insertion!]) : undefined
   return <div className="detail-panel line-editor">
@@ -300,24 +309,51 @@ export function LineEditor({ game, draft, quote, defaultName, change, cancel, co
       </div>
     </div>
     <div className="section-heading editor-stops"><h3>{t('line.stopOrder')}</h3><span>{draft.stops.length}</span></div>
-    <p className="small-hint">{insertAt ? t('line.inserting', { station: stationLabel(game, insertAt, t) }) :
+    <p className="small-hint">{draft.replacement !== undefined ? t('service.replaceHint', { station: stationName(draft.stops[draft.replacement]) }) :
+      insertAt ? t('line.inserting', { station: stationLabel(game, insertAt, t) }) :
       t(game.hongKong ? draft.kind === 'edit' ? 'hk.editControls' : 'hk.drawNext' : draft.kind === 'edit' ? 'engineering.editControls' : 'line.stopHint')}</p>
     <ol className="draft-stops" style={{ '--line-color': draft.color } as React.CSSProperties}>
       {draft.stops.map((id, index) => {
-        const station = game.stations.find((stop) => stop.id === id) ?? quote.newStations.find((stop) => stop.id === id)
+        const station = plannedStations.find((stop) => stop.id === id)
         const point = draft.proposed[id]
-        return <li key={id} className={draft.insertion === index ? 'insertion' : ''}>
-          <span className="draft-index">{index + 1}</span><span className="draft-name">{station ? stationLabel(game, station, t) : point ? stationNameAt(game, point, t) : '—'}</span>
+        const label = station ? stationName(id) : point ? stationNameAt(game, point, t) : '—'
+        return <li key={id} className={(game.hongKong ? 'hong-kong-stop ' : '') + (draft.insertion === index || draft.replacement === index ? 'insertion' : '')}>
+          <span className="draft-index">{index + 1}</span><span className="draft-name">{label}</span>
           <button type="button" aria-label={t('line.moveUp')} title={t('line.moveUp')} disabled={extension || index === 0} onClick={() => move(index, -1)}><ArrowUp size={14}/></button>
           <button type="button" aria-label={t('line.moveDown')} title={t('line.moveDown')} disabled={extension || index === draft.stops.length - 1} onClick={() => move(index, 1)}><ArrowDown size={14}/></button>
           <button type="button" aria-label={t('line.insert')} title={t('line.insert')} aria-pressed={draft.insertion === index} disabled={extension}
-            onClick={() => change({ ...draft, insertion: draft.insertion === index ? undefined : index })}><Plus size={14}/></button>
+            onClick={() => change({ ...draft, insertion: draft.insertion === index ? undefined : index, replacement: undefined })}><Plus size={14}/></button>
+          {game.hongKong && <>
+            <button type="button" aria-label={t('service.replaceStop', { station: label })} title={t('service.replaceStop', { station: label })}
+              aria-pressed={draft.replacement === index} disabled={extension && index === 0}
+              onClick={() => change({ ...draft, insertion: undefined, replacement: draft.replacement === index ? undefined : index })}><ArrowLeftRight size={14}/></button>
+            <button type="button" aria-label={t('service.renameStop', { station: label })} title={t('service.renameStop', { station: label })}
+              aria-pressed={renameId === id} disabled={!station?.names} onClick={() => {
+                setRename(draft.stationNames?.[id] ?? station!.names!)
+                setRenameId(renameId === id ? undefined : id)
+              }}><Pencil size={14}/></button>
+          </>}
           <button type="button" aria-label={t('line.removeStop')} title={t('line.removeStop')} disabled={extension && index === 0}
             onClick={() => change({ ...draft, stops: draft.stops.filter((stop) => stop !== id),
-              anchor: draft.anchor === id ? undefined : draft.anchor, insertion: undefined })}><X size={14}/></button>
+              anchor: draft.anchor === id ? undefined : draft.anchor, insertion: undefined, replacement: undefined })}><X size={14}/></button>
         </li>
       })}
     </ol>
+    {renameId && draft.stops.includes(renameId) && <form className="inline-station-rename" onSubmit={(event) => {
+      event.preventDefault()
+      const original = draft.stationNames?.[renameId] ?? plannedStations.find((entry) => entry.id === renameId)?.names
+      if (original) change({ ...draft, stationNames: { ...draft.stationNames, [renameId]: {
+        en: rename.en.trim() || original.en, zh: rename.zh.trim() || original.zh,
+      } } })
+      setRenameId(undefined)
+    }}>
+      <label className="input-field">{t('hk.englishName')}<input value={rename.en} autoFocus maxLength={maxNameLength}
+        onChange={(event) => setRename({ ...rename, en: event.target.value })}/></label>
+      <label className="input-field">{t('hk.chineseName')}<input value={rename.zh} maxLength={maxNameLength}
+        onChange={(event) => setRename({ ...rename, zh: event.target.value })}/></label>
+      <button type="submit" className="action-button">{t('station.rename')}</button>
+      <button type="button" className="action-button" onClick={() => setRenameId(undefined)}>{t('common.cancel')}</button>
+    </form>}
     {draft.control && <ActionButton onClick={() => change(editControl(draft, draft.control!))}>
       <Trash2 size={16}/>{t('engineering.removeControl')}
     </ActionButton>}
@@ -326,10 +362,28 @@ export function LineEditor({ game, draft, quote, defaultName, change, cancel, co
         onChange={(event) => change({ ...draft, circular: event.target.checked })}/>
       <span>{t('line.loop')} <small>{t('line.loopHint')}</small></span>
     </label>
+    {game.hongKong && quote.rows.map(({ section, reused, added }) => {
+      const options = railReuseOptions(game, section.from, section.to, draft.id)
+      if (!options.length) return null
+      const key = sectionKey(section.from, section.to)
+      const selected = reused && section.rails ? railPathKey(section.rails) : ''
+      return <label className="select-field rail-reuse-field" key={key}>
+        <span>{t('line.corridorName', { from: stationName(section.from), to: stationName(section.to) })}</span>
+        <select data-testid="track-reuse-select" aria-label={t('service.trackChoice', { from: stationName(section.from), to: stationName(section.to) })}
+          value={options.some((option) => option.key === selected) ? selected : ''}
+          onChange={(event) => change({ ...draft, reuse: { ...draft.reuse, [key]: options.find((option) => option.key === event.target.value)?.path ?? [] } })}>
+          <option value="">{t(added || reused ? 'service.newTrack' : 'service.separateTrack')}</option>
+          {options.map((option) => <option key={option.key} value={option.key}>{t('service.useTrack', {
+            lines: option.lines.map((line) => lineLabel(line, t, false, game)).join(' / '), length: number(unitsToMeters(option.length) / 1000, locale),
+          })}</option>)}
+        </select>
+      </label>
+    })}
     {game.hongKong && draft.kind === 'edit' && old && quote.rows.length > 0 && <details className="section-methods">
       <summary>{t('hk.sectionMethods')}</summary>
-      {quote.rows.map(({ section }, index) => {
+      {quote.rows.map(({ section, reused }, index) => {
         const key = sectionKey(section.from, section.to)
+        if (reused) return <p key={key} className="small-hint">{t('service.reusedSection', { number: index + 1 })}</p>
         return <MethodSelector key={key} value={draft.methods?.[key] ?? section.method} unselected={t('hk.mixed')}
           accessible={t('hk.sectionNumber', { number: index + 1 })}
           change={(method) => change({ ...draft, methods: { ...draft.methods, [key]: method } })}/>
@@ -337,13 +391,35 @@ export function LineEditor({ game, draft, quote, defaultName, change, cancel, co
     </details>}
     <div className="build-total"><span>{t('line.cost')}</span><strong>{gameMoney(game, quote.cost, locale)}</strong></div>
     {game.hongKong && <ConstructionBudget game={game} quote={quote}/>}
-    {quote.interchanges.length > 0 && <p className="small-hint">{t('engineering.includesInterchanges', { value: quote.interchanges.length })}</p>}
+    {game.hongKong && <CurveRestrictions game={game} quote={quote}/>}
+    {quote.interchanges.length > 0 && <p className="small-hint">{game.hongKong ? t('service.plannedTransfers', {
+      stations: quote.interchanges.map((station) => stationName(station.id)).join(' / '),
+    }) : t('engineering.includesInterchanges', { value: quote.interchanges.length })}</p>}
     {quote.error && quote.error !== 'needsStops' && <p className="inline-warning">{t('error.' + quote.error)}</p>}
     {old && draft.kind === 'edit' && (old.stops.join('|') !== draft.stops.join('|') || old.circular !== draft.circular) &&
       <p className="small-hint">{t('line.topologyNotice')}</p>}
     <ActionButton kind="primary" onClick={commit} disabled={Boolean(quote.error || !quote.rows.length || !game.hongKong && draft.pending.length || draft.control)}>
       <Route size={17}/>{t(old ? 'line.apply' : 'line.save')}
     </ActionButton>
+  </div>
+}
+
+export function SharedTrackPanel({ game, id, back, pickLine }: { game: GameState; id: string; back: () => void; pickLine: (id: string) => void }) {
+  const { t, i18n } = useTranslation()
+  const section = game.infrastructure?.[id]
+  if (!section) return null
+  const services = railUsers(game.lines).get(id) ?? []
+  const from = game.stations.find((station) => station.id === section.from)
+  const to = game.stations.find((station) => station.id === section.to)
+  return <div className="detail-panel" data-testid="shared-track-panel">
+    <BackButton onClick={back}/>
+    <div className="detail-heading"><span className="detail-icon"><Route size={22}/></span><h2>{t('service.sharedTrack')}</h2></div>
+    {from && to && <p>{t('line.corridorName', { from: stationLabel(game, from, t), to: stationLabel(game, to, t) })}</p>}
+    <DataGrid values={[[t('engineering.length'), t('common.metros', { value: number(unitsToMeters(trackLength(section.pieces)) / 1000, i18n.resolvedLanguage ?? 'en') })]]}/>
+    <h3>{t('service.servedBy')}</h3>
+    {services.map((line) => <button type="button" className="entity-row" onClick={() => pickLine(line.id)} key={line.id}>
+      <LineBadge line={line}/><strong>{lineLabel(line, t, false, game)}</strong><ChevronRight size={15}/>
+    </button>)}
   </div>
 }
 

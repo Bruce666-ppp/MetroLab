@@ -5,16 +5,18 @@ import type { Action } from '../src/engine/actions.ts'
 import { allTrack } from '../src/engine/alignment.ts'
 import { lineDetails, networkReach } from '../src/engine/analytics.ts'
 import { getCity } from '../src/engine/city.ts'
-import { HKD, measurePieces } from '../src/engine/economy.ts'
-import { elevationAt, HONG_KONG, hongKong, hongKongName, surfaceAt, surveyPoint, walkCells } from '../src/engine/hongKong.ts'
+import { applyOperatingMinute, HKD, measurePieces } from '../src/engine/economy.ts'
+import { elevationAt, existingMtrStationAt, HONG_KONG, hongKong, hongKongName, officialMtrStationAt, surfaceAt, surveyPoint, walkCells } from '../src/engine/hongKong.ts'
 import { activityPopulation, demandDirections, demandPeriod, demandSurface, TCS_WEEKDAY } from '../src/engine/hongKongDemand.ts'
 import { coveredCells, stationPreview } from '../src/engine/network.ts'
 import { quoteInsertion, quoteLine, roundPoint } from '../src/engine/planning.ts'
+import { railReuseOptions } from '../src/engine/rails.ts'
 import { makeRoutingNetwork, routesFrom } from '../src/engine/routing.ts'
 import { loadGame, saveGame } from '../src/engine/save.ts'
 import { advanceGame, newGame, SAVE_VERSION } from '../src/engine/simulation.ts'
-import { pointOnTrack, trackLength, trackStraight, unitsToMeters } from '../src/engine/track.ts'
+import { pointOnTrack, radiusStatus, trackCurves, trackLength, trackStraight, unitsToMeters } from '../src/engine/track.ts'
 import type { GameState, LineDesign, Point, TrackMethod } from '../src/engine/types.ts'
+import { curveRadiusText } from '../src/ui/format.ts'
 
 const city = getCity(HONG_KONG)
 const fresh = () => newGame('career', HONG_KONG)
@@ -26,6 +28,8 @@ const wongTaiSin = { x: 1003.9, y: 247.8 }
 const hku = { x: 400.5, y: 887.8 }
 const shekTongTsui = { x: 407.3, y: 870.4 }
 const peakGarden = { x: 490.6, y: 1001 }
+const admiralty = { x: 705.5, y: 942.3 }
+const wanChai = { x: 785.4, y: 958.6 }
 
 function act(game: GameState, action: Action) {
   const result = applyAction(game, action)
@@ -66,6 +70,92 @@ test('the real HKU station and campus entrance have separate bilingual names fro
   assert.deepEqual(game.stations.map((station) => station.names), [hkuName, shekTongTsuiName])
   assert.equal(hongKongName({ x: 413.2, y: 895.6 }, [game.stations[0]]).en, 'HKU South East')
   assert.deepEqual(hongKongName(shekTongTsui, [game.stations[0]]), shekTongTsuiName)
+})
+
+test('official naming regions are nearest-match suggestions, and only a manual rename changes a saved name', () => {
+  assert.equal(officialMtrStationAt(central)?.code, 'CEN')
+  assert.equal(officialMtrStationAt(admiralty)?.code, 'ADM')
+  assert.equal(officialMtrStationAt(shekTongTsui), undefined)
+  let game = act(fresh(), { type: 'buildStation', point: central })
+  const id = game.stations[0].id
+  assert.deepEqual(game.stations[0].names, { en: 'Central', zh: '中環' })
+  assert.equal(existingMtrStationAt(central, game.stations)?.id, id)
+  game = act(game, { type: 'moveStation', id, point: admiralty })
+  assert.deepEqual(game.stations[0].names, { en: 'Central', zh: '中環' })
+  game = act(game, { type: 'renameStation', id, name: 'Harbour Hall', chinese: '海港大堂' })
+  assert.deepEqual(game.stations[0].names, { en: 'Harbour Hall', zh: '海港大堂' })
+  assert.equal(existingMtrStationAt(central, game.stations), undefined)
+})
+
+test('actual arc radii use a strict 400 m restriction, with enough precision below the boundary', () => {
+  for (const radius of [399, 400, 450]) {
+    const r = radius / 10
+    const curves = trackCurves([{ kind: 'arc', from: { x: r, y: 0 }, to: { x: 0, y: r }, center: { x: 0, y: 0 }, radius: r, sweep: Math.PI / 2 }])
+    assert.equal(curves.length, 1)
+    assert.equal(curves[0].radius, radius)
+    assert.equal(radiusStatus(curves[0].radius, true) === 'restricted', radius === 399)
+  }
+  assert.equal(curveRadiusText(399.995, 400, 'en'), '399.995')
+  assert.equal(curveRadiusText(400, 400, 'en'), '400')
+  assert.equal(radiusStatus(225, true), 'restricted')
+  assert.equal(radiusStatus(0, true), 'invalid')
+})
+
+test('independent track, shared track and express stopping patterns keep separate services and one physical asset per reused segment', () => {
+  const seed = newGame('sandbox', HONG_KONG)
+  const original = act(seed, { type: 'saveLine', design: { ...plan(central, admiralty), stops: ['a', 'b', 'c'],
+    proposed: { a: central, b: admiralty, c: wanChai } } })
+  const source = original.lines[0]
+  const [a, b, c] = source.stops
+  const service = { stops: [a, b], name: 'Connector', color: '#07865e', circular: false }
+  let game = act(original, { type: 'saveLine', design: service })
+  const line = game.lines[1].id
+  assert.notEqual(game.lines[1].track[0].rails![0].id, source.track[0].rails![0].id)
+  assert.equal(Object.keys(game.infrastructure!).length, 3)
+  assert.ok(game.stations.filter((station) => [a, b].includes(station.id)).every((station) => station.interchange))
+  const path = railReuseOptions(game, a, b, line)[0].path
+  const reuse = { ...service, reuse: { [a + '|' + b]: path } }
+  const quote = quoteLine(game, reuse, game.lines[1])
+  assert.equal(quote.cost, 0)
+  assert.ok(quote.reusedLength > 0 && quote.operatingHourly > 0)
+  const balance = game.funds
+  game = act(game, { type: 'saveLine', id: line, design: reuse })
+  assert.equal(game.funds, balance)
+  assert.equal(Object.keys(game.infrastructure!).length, 2)
+  const before = structuredClone(original), after = structuredClone(game)
+  applyOperatingMinute(before, 0, 0)
+  applyOperatingMinute(after, 0, 0)
+  assert.equal(before.today.expenses, after.today.expenses)
+
+  const through = railReuseOptions(game, c, a)[0].path
+  const express = { ...service, name: 'Express', stops: [c, a], reuse: { [c + '|' + a]: through } }
+  assert.equal(quoteLine(game, express).cost, 0)
+  game = act(game, { type: 'saveLine', design: express })
+  const expressId = game.lines[2].id
+  assert.deepEqual(game.lines[2].stops, [c, a])
+  assert.equal(game.lines[2].track[0].rails!.length, 2)
+  assert.ok(game.lines[2].track[0].rails!.every((rail) => rail.direction === -1))
+
+  const moved = { x: 622, y: 926 }
+  const rename = { en: 'Central Commons', zh: '中環匯' }
+  game = act(game, { type: 'saveLine', id: line, design: { ...game.lines[1], stationMoves: { [a]: moved }, stationNames: { [a]: rename } } })
+  assert.deepEqual(game.stations.find((station) => station.id === a)?.names, rename)
+  assert.deepEqual(game.lines[0].track[0].pieces[0].from, moved)
+  assert.deepEqual(game.lines[1].track[0].pieces[0].from, moved)
+  assert.deepEqual(game.lines[2].track[0].pieces.at(-1)?.to, moved)
+  game = act(game, { type: 'saveLine', id: source.id, design: { ...game.lines[0], stops: [a, c] } })
+  assert.ok(game.stations.some((station) => station.id === b))
+  assert.deepEqual(game.lines[1].stops, [a, b])
+  game = act(game, { type: 'removeLine', id: source.id })
+  assert.equal(Object.keys(game.infrastructure!).length, 2)
+  assert.ok(game.lines.some((entry) => entry.id === expressId))
+
+  const storage = new Map<string, string>()
+  const io = { setItem: (key: string, value: string) => { storage.set(key, value) }, getItem: (key: string) => storage.get(key) ?? null,
+    removeItem: (key: string) => { storage.delete(key) } }
+  saveGame(io, game)
+  const saved = loadGame(io)?.game
+  assert.deepEqual(saved, game)
 })
 
 test('building and moving stations reject sea, inland water and designated parks without changing the game', () => {

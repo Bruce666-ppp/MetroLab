@@ -3,7 +3,7 @@ import { HKD, netOperating } from './economy.ts'
 import { cityCoverage, getDistrictAccess, lineLength, servedStationIds, stationCapacity, trainLoad, waitingAt } from './network.ts'
 import { alignmentMetrics, allTrack, legacyRestricted } from './alignment.ts'
 import { DWELL, TRAIN_SPEED } from './network.ts'
-import { curveSpeedKmh, ENGINEERING, trackProfile } from './track.ts'
+import { curveSpeedKmh, ENGINEERING, trackLength, trackProfile } from './track.ts'
 import type { City, GameState, Line } from './types.ts'
 
 export function networkReach(game: GameState) {
@@ -26,7 +26,8 @@ export function gameMetrics(game: GameState, reach: ReturnType<typeof networkRea
     ? waiting / game.stations.reduce((sum, station) => sum + stationCapacity(station), 0) : 0
   return {
     coverage, population, jobs, jobCoverage, waiting, onboard, fleet: fleet.length,
-    networkLength: game.lines.reduce((sum, line) => sum + lineLength(line), 0),
+    networkLength: game.infrastructure ? Object.values(game.infrastructure).reduce((sum, section) => sum + trackLength(section.pieces), 0) :
+      game.lines.reduce((sum, line) => sum + lineLength(line), 0),
     operatingLines: new Set(fleet.map((train) => train.lineId)).size,
     transferStations: game.stations.filter((station) => station.interchange && game.lines.filter((line) => line.stops.includes(station.id)).length > 1).length,
     servedShare: today.demand ? Math.min(1, today.arrived / today.demand) : 0,
@@ -53,7 +54,7 @@ export function lineDetails(game: GameState, line: Line) {
   const interval = fleet.length ? Math.max(line.headway, cycle / fleet.length) : undefined
   const capacity = interval === undefined ? undefined :
     60 * (fleet.reduce((sum, train) => sum + train.capacity, 0) / fleet.length) / interval
-  const legacy = legacyRestricted(line)
+  const legacy = legacyRestricted(line, !!game.hongKong)
   const maxSpeed = Math.min(ENGINEERING.designSpeedKmh, ...line.track.flatMap((section) => section.pieces.map((piece) => {
     const method = piece.method ?? section.method
     return method ? HKD.methods[method].speedKmh : Infinity

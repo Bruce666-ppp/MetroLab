@@ -2,6 +2,9 @@
 
 ## 2026-11-28
 
+- Added shared physical track and independent service stop patterns, interchange previews and zero construction cost for reused track and stations.
+- Added station service badges, selected-line highlighting and curve annotations with the Hong Kong 400 m speed restriction threshold.
+- Added official MTR names for new stations near real station locations, station and control dragging, transactional line edits and undo/redo. Schema 5 migrates existing Hong Kong tracks to physical track IDs.
 - Blocked construction when an alignment ends in water. Marked offshore ends in older saves so they can be moved onto land in the line editor.
 - Checked the actual click location as well as the final station position before coastal station placement and track snapping.
 - Distinguished HKU and Shek Tong Tsui in station suggestions and planned labels using the local MTR station, campus exits and market as geographic references.

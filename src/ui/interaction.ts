@@ -6,7 +6,7 @@ import { nearestOnTrack, trackStraight } from '../engine/track.ts'
 import type { GameState, Line, LineDesign, Point, TrackMethod } from '../engine/types.ts'
 
 export type Tool = 'select' | 'station' | 'line' | 'move'
-export type Selection = { type: 'station' | 'line' | 'train' | 'district'; id: string } | undefined
+export type Selection = { type: 'station' | 'line' | 'train' | 'district' | 'track'; id: string } | undefined
 export interface ControlSelection { key: string; index: number }
 
 export interface LineDraft extends LineDesign {
@@ -14,6 +14,7 @@ export interface LineDraft extends LineDesign {
   id?: string
   anchor?: string
   insertion?: number
+  replacement?: number
   pending: Point[]
   placingControl?: boolean
   placingStation?: boolean
@@ -31,6 +32,9 @@ export type MapTarget = {
   trackPoint?: Point
   trackLines?: string[]
   surveyTolerance?: number
+  draggedStation?: string
+  draggedControl?: ControlSelection
+  skipStationOffer?: boolean
 }
 
 export function availableLineColor(game: GameState) {
@@ -71,10 +75,18 @@ export function appendDraftStop(draft: LineDraft, id: string, position?: Point):
     proposed: position ? { ...draft.proposed, [id]: position } : draft.proposed }
 }
 
+export function replaceDraftStop(draft: LineDraft, id: string, position?: Point): LineDraft {
+  const old = draft.stops[draft.replacement!]
+  const controls = Object.fromEntries(Object.entries(draft.controls).map(([key, points]) =>
+    [key.split('|').map((stop) => stop === old ? id : stop).join('|'), points]))
+  return { ...draft, controls, stops: draft.stops.map((stop) => stop === old ? id : stop), replacement: undefined,
+    placingStation: false, proposed: position ? { ...draft.proposed, [id]: position } : draft.proposed }
+}
+
 export function appendHongKongStop(game: GameState, draft: LineDraft, id: string, position?: Point, tolerance = 0) {
   const onMap = position ?? game.stations.find((station) => station.id === id)?.position
   if (!onMap) return draft
-  const last = draft.stops.at(-1)
+  const last = draft.insertion === undefined ? draft.stops.at(-1) : draft.stops[draft.insertion]
   const start = last ? draftPosition(game, draft, last) : undefined
   const points = start ? [start, ...draft.pending] : draft.pending
   let point = onMap
@@ -109,9 +121,19 @@ export function appendHongKongStop(game: GameState, draft: LineDraft, id: string
 }
 
 export const draftPosition = (game: GameState, draft: LineDraft, id: string) =>
-  draft.proposed[id] ?? game.stations.find((station) => station.id === id)?.position
+  draft.proposed[id] ?? draft.stationMoves?.[id] ?? game.stations.find((station) => station.id === id)?.position
+
+export function moveDraftStation(draft: LineDraft, id: string, point: Point): LineDraft {
+  return draft.proposed[id] ? { ...draft, proposed: { ...draft.proposed, [id]: point } } :
+    { ...draft, stationMoves: { ...draft.stationMoves, [id]: point } }
+}
 
 export function editControl(draft: LineDraft, selection: ControlSelection, point?: Point) {
+  if (selection.key === 'pending') {
+    const pending = draft.pending.slice()
+    pending.splice(selection.index, 1, ...(point ? [point] : []))
+    return { ...draft, pending, control: undefined }
+  }
   if (draft.alignmentEnds && (selection.key.startsWith('@head|') || selection.key.endsWith('|@tail'))) {
     const side = selection.key.startsWith(headAnchor + '|') ? 'head' : 'tail'
     const controls = [...(draft.alignmentEnds[side] ?? [])]
@@ -120,7 +142,10 @@ export function editControl(draft: LineDraft, selection: ControlSelection, point
   }
   const controls = [...(draft.controls[selection.key] ?? [])]
   controls.splice(selection.index, 1, ...(point ? [point] : []))
-  return { ...draft, controls: { ...draft.controls, [selection.key]: controls }, control: undefined }
+  const reuse = { ...draft.reuse }
+  delete reuse[selection.key]
+  delete reuse[selection.key.split('|').reverse().join('|')]
+  return { ...draft, reuse, controls: { ...draft.controls, [selection.key]: controls }, control: undefined }
 }
 
 export function addGeometryControl(game: GameState, draft: LineDraft, point: Point) {
@@ -136,7 +161,11 @@ export function addGeometryControl(game: GameState, draft: LineDraft, point: Poi
     controls.splice(next < 0 ? controls.length : next, 0, point)
     closest = { gap: hit.distance, controls, key: sectionKey(section.from, section.to) }
   }
-  return closest ? { ...draft, controls: { ...draft.controls, [closest.key]: closest.controls } } : draft
+  if (!closest) return draft
+  const reuse = { ...draft.reuse }
+  delete reuse[closest.key]
+  delete reuse[closest.key.split('|').reverse().join('|')]
+  return { ...draft, reuse, controls: { ...draft.controls, [closest.key]: closest.controls } }
 }
 
 export function smoothDraft(game: GameState, draft: LineDraft) {

@@ -48,7 +48,7 @@ export function HelpDialog({ close, hongKong }: { close: () => void; hongKong: b
   const { t } = useTranslation()
   const shortcuts = [
     [t('help.select'), 'V'], [t('help.station'), 'S'], [t('help.line'), 'L'],
-    [t('help.pause'), 'Space'], [t('help.undo'), 'Ctrl / ⌘ + Z'],
+    [t('help.pause'), 'Space'], [t('help.undo'), 'Ctrl / ⌘ + Z'], [t('service.redo'), 'Ctrl / ⌘ + Shift + Z'],
     [t('help.cancel'), 'Esc'], [t('help.navigate'), t('help.navigateKeys')],
     [t('help.finish'), 'Enter'], [t(hongKong ? 'hk.addDraftStation' : 'help.control'), 'Shift + click'],
   ]
@@ -61,15 +61,17 @@ export function HelpDialog({ close, hongKong }: { close: () => void; hongKong: b
   </Dialog>
 }
 
-export function ConfirmDialog({ title, body, close, onConfirm, destructive }: {
+export function ConfirmDialog({ title, body, close, onConfirm, destructive, confirmLabel, alternative }: {
   title: string; body: string; close: () => void; onConfirm: () => void; destructive?: boolean
+  confirmLabel?: string; alternative?: { label: string; action: () => void }
 }) {
   const { t } = useTranslation()
   return <Dialog title={title} close={close}>
     <p className="dialog-copy">{body}</p>
     <div className="dialog-actions">
       <button type="button" className="action-button" onClick={close}>{t('common.cancel')}</button>
-      <button type="button" className={'action-button ' + (destructive ? 'danger' : 'primary')} onClick={onConfirm}>{t('common.confirm')}</button>
+      {alternative && <button type="button" className="action-button" onClick={alternative.action}>{alternative.label}</button>}
+      <button type="button" className={'action-button ' + (destructive ? 'danger' : 'primary')} onClick={onConfirm}>{confirmLabel ?? t('common.confirm')}</button>
     </div>
   </Dialog>
 }

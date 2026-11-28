@@ -6,7 +6,7 @@ import { DEMAND_INTERVAL, generateDemand, processPassengers } from './passengers
 import { operateTrains } from './trains.ts'
 import type { GameState, Mode } from './types.ts'
 
-export const SAVE_VERSION = 4
+export const SAVE_VERSION = 5
 export const TICK = 0.25
 
 export const blankOperations = () => ({ lineActivity: {}, od: {}, alternatives: { walk: 0, bus: 0, ferry: 0 } })
@@ -19,7 +19,7 @@ export function newGame(mode: Mode, cityId = 'marlow'): GameState {
     growth: Object.fromEntries(city.districts.map((area) => [area.id, Number(area.opens === 1)])),
     carry: {}, districtDemand: {}, stationActivity: {}, today: blankTotals(), lifetime: blankTotals(), history: [],
     hourArrivals: 0, hourBalance: 0, milestones: [], revision: 0,
-    ...(city.hongKong ? { hongKong: blankOperations() } : {}),
+    ...(city.hongKong ? { hongKong: blankOperations(), infrastructure: {} } : {}),
   }
 }
 

@@ -4,15 +4,16 @@ import type { quoteLine } from '../engine/planning.ts'
 import { trackMethods } from '../engine/economy.ts'
 import { ENGINEERING, radiusStatus, trackColors, unitsToMeters } from '../engine/track.ts'
 import type { GameState, TrackMethod } from '../engine/types.ts'
-import { gameMoney, lineLabel, number } from './format.ts'
+import { curveRadiusText, gameMoney, lineLabel, number, stationLabel } from './format.ts'
 import { extensionChoices } from './interaction.ts'
 import type { LineDraft } from './interaction.ts'
 
-export function EngineeringLegend() {
+export function EngineeringLegend({ hongKong = false }: { hongKong?: boolean }) {
   const { t } = useTranslation()
   return <div className="engineering-legend">
     {(['good', 'caution', 'restricted', 'invalid'] as const).map((grade) =>
-      <span key={grade}><i style={{ background: trackColors[grade] }}/>{t('engineering.' + grade, {
+      <span key={grade}><i style={{ background: trackColors[grade] }}/>{t(hongKong && grade === 'restricted' ? 'service.legendRestriction' :
+        hongKong && grade === 'invalid' ? 'service.legendJunction' : 'engineering.' + grade, {
         min: ENGINEERING.minimumRadius, mid: ENGINEERING.restrictedRadius, high: ENGINEERING.preferredRadius,
       })}</span>)}
   </div>
@@ -37,15 +38,37 @@ export function ConstructionBudget({ game, quote }: { game: GameState; quote: Re
     ...trackMethods.filter((method) => quote.infrastructure[method] > 0).map((method): [string, number] => ['hk.method.' + method, quote.infrastructure[method]]),
     ['hk.siteWorks', quote.infrastructure.terrain], ['hk.harbourPremium', quote.infrastructure.water],
     ['hk.stationWorks', quote.stationsCost], ['hk.interchangeWorks', quote.interchangeCost],
+    ['service.relocationCost', quote.stationMoveCost],
   ] as [string, number][]
   return <dl className="construction-budget" data-testid="construction-budget">
     {entries.filter(([, value]) => value > 0).map(([label, amount]) => <div key={label}>
       <dt>{t(label)}</dt><dd>{gameMoney(game, amount, locale)}</dd>
     </div>)}
+    {!!quote.reusedLength && <div><dt>{t('service.reusedLength')}</dt>
+      <dd>{t('common.metros', { value: number(unitsToMeters(quote.reusedLength) / 1000, locale) })}</dd></div>}
+    {!!quote.operatingHourly && <div><dt>{t('service.operatingHourly')}</dt>
+      <dd>{gameMoney(game, quote.operatingHourly, locale, false)}</dd></div>}
     <div className={quote.remaining < 0 && game.mode !== 'sandbox' ? 'negative' : undefined}>
       <dt>{t('hk.remainingFunds')}</dt><dd>{game.mode === 'sandbox' ? t('common.infinity') : gameMoney(game, quote.remaining, locale)}</dd>
     </div>
   </dl>
+}
+
+export function CurveRestrictions({ game, quote }: { game: GameState; quote: ReturnType<typeof quoteLine> }) {
+  const { t, i18n } = useTranslation()
+  if (!quote.restrictions.length) return null
+  const stations = (quote.relocation?.game?.stations ?? game.stations).concat(quote.newStations)
+  const label = (id: string) => {
+    const station = stations.find((entry) => entry.id === id)
+    return station ? stationLabel(game, station, t) : t(id === '@head' ? 'hk.startApproach' : 'hk.endApproach')
+  }
+  return <section className="curve-restrictions" data-testid="curve-restrictions">
+    <h3>{t('service.restrictions', { count: quote.restrictions.length })}</h3>
+    <ol>{quote.restrictions.map(({ radius, from, to }, index) => <li key={index}>
+      <strong>{t('service.restrictedCurve', { value: curveRadiusText(radius, ENGINEERING.restrictedRadius, i18n.resolvedLanguage ?? 'en') })}</strong>
+      <small>{t('line.corridorName', { from: label(from), to: label(to) })}</small>
+    </li>)}</ol>
+  </section>
 }
 
 export function DrawControls({ game, draft, quote, preview, choose, commit, cancel, smooth, toggleControl, changeMethod }: {
@@ -61,7 +84,7 @@ export function DrawControls({ game, draft, quote, preview, choose, commit, canc
   const radius = value.radius ?? value.totalRadius
   const error = quote.error === 'waterAlignmentEnd' ? quote.error : value.error
   const invalid = value.error === 'curve'
-  const warning = error === 'curve' ? t('engineering.invalidRadius', { minimum: ENGINEERING.minimumRadius }) :
+  const warning = error === 'curve' ? game.hongKong ? t('service.invalidCurve') : t('engineering.invalidRadius', { minimum: ENGINEERING.minimumRadius }) :
     error && error !== 'needsStops' ? t('error.' + error) :
     draft.control ? t('engineering.moveControl') :
     !game.hongKong && draft.pending.length ? t('engineering.finishControl') : undefined
@@ -69,7 +92,7 @@ export function DrawControls({ game, draft, quote, preview, choose, commit, canc
     t('line.defaultName', { number: Math.max(0, ...game.lines.map((line) => line.number)) + 1 }))
   const metric = [
     ['length', t('common.metros', { value: number(unitsToMeters(value.length) / 1000, locale) })],
-    ['radius', radius === null ? t('engineering.straight') : t('map.meters', { value: number(radius, locale) })],
+    ['radius', radius === null ? t('engineering.straight') : t('map.meters', { value: curveRadiusText(radius, ENGINEERING.restrictedRadius, locale) })],
     ['design', t('train.kmh', { value: number(ENGINEERING.designSpeedKmh, locale) })],
     ['limit', invalid ? '—' : t('train.kmh', { value: number(value.limit, locale) })],
     ['travel', invalid || !value.travel ? '—' : t('common.minutes', { value: number(value.travel, locale) })],
@@ -102,10 +125,11 @@ export function DrawControls({ game, draft, quote, preview, choose, commit, canc
     </div>
     {value.rows.length > 0 && <dl className="draw-metrics">
       {metric.map(([key, text]) => <div key={key}><dt>{t('engineering.' + key)}</dt>
-        <dd style={key === 'radius' && radius !== null ? { color: trackColors[radiusStatus(radius)] } : undefined}>{text}</dd></div>)}
+        <dd style={key === 'radius' && radius !== null ? { color: trackColors[radiusStatus(radius, !!game.hongKong)] } : undefined}>{text}</dd></div>)}
     </dl>}
     <div className={'draw-tip' + (warning ? ' draw-warning' : '')}>
-      <span>{warning ?? (game.hongKong ? t(draft.placingStation ? 'hk.placeDraftStation' : draft.stops.length || draft.pending.length ? 'hk.drawNext' : 'hk.drawStart') :
+      <span>{warning ?? (game.hongKong && value.restrictions.length ? t('service.restrictions', { count: value.restrictions.length }) :
+        game.hongKong ? t(draft.placingStation ? 'hk.placeDraftStation' : draft.stops.length || draft.pending.length ? 'hk.drawNext' : 'hk.drawStart') :
         draft.stops.length ? t('engineering.nextPoint') : t('engineering.startAtStation'))}</span>
       {quote.error === 'curve' && quote.rows.some((row) => row.added && row.section.controls.length > 0) &&
         <button type="button" className="text-button" onClick={smooth}><WandSparkles size={15}/>{t('engineering.smooth')}</button>}

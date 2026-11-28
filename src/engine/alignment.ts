@@ -31,20 +31,40 @@ interface AlignmentSection {
   added: boolean
   radius: number | null
   junction: boolean
+  reused?: boolean
 }
 
-export function alignTrack(positions: Map<string, Point>, design: LineDesign, existing?: Line) {
+export function alignThrough(points: Point[], start?: Point, end?: Point) {
+  const pieces: TrackSection['pieces'] = []
+  let invalid = false
+  const tangents = points.map((point, i) => {
+    if (i === 0 && start) return start
+    if (i === points.length - 1 && end) return end
+    return stationTangent(points[i - 1], point, points[i + 1])
+  })
+  for (let i = 1; i < points.length; i++) {
+    const result = biarc(points[i - 1], points[i], tangents[i - 1], tangents[i])
+    if (!result) invalid = true
+    pieces.push(...(result ?? [trackStraight(points[i - 1], points[i])]))
+  }
+  return { pieces, invalid }
+}
+
+export function alignTrack(positions: Map<string, Point>, design: LineDesign, existing?: Line,
+  fixedTrack = new Map<string, TrackSection | undefined>()) {
   const oldSections = new Map(existing?.track.map((part) => [pairKey(part.from, part.to), part]))
   const links = pairsOf(design.stops, design.circular).map(([from, to]) => {
     const match = oldSections.get(pairKey(from, to))
     const old = match && match.from !== from ? reverseSection(match) : match
     const a = positions.get(from)!
     const b = positions.get(to)!
-    const controls = design.controls?.[sectionKey(from, to)] ??
+    const key = sectionKey(from, to)
+    const fixed = fixedTrack.get(key)
+    const controls = fixed?.controls ?? design.controls?.[key] ??
       design.controls?.[sectionKey(to, from)]?.slice().reverse() ?? old?.controls ?? []
-    const reuse = old && distance(old.pieces[0].from, a) < 1e-6 &&
+    const reuse = !fixedTrack.has(key) && old && distance(old.pieces[0].from, a) < 1e-6 &&
       distance(old.pieces.at(-1)!.to, b) < 1e-6 && samePoints(controls, old.controls)
-    return { from, to, points: [a, ...controls, b], controls, fixed: reuse ? old : undefined }
+    return { from, to, points: [a, ...controls, b], controls, fixed: fixed ?? (reuse ? old : undefined) }
   })
   const previous = (index: number) => links[index - 1] ?? (design.circular ? links.at(-1) : undefined)
   const next = (index: number) => links[index + 1] ?? (design.circular ? links[0] : undefined)
@@ -54,18 +74,9 @@ export function alignTrack(positions: Map<string, Point>, design: LineDesign, ex
     const before = previous(index)
     const after = next(index)
     const points = link.points
-    const pieces = []
-    let invalid = false
-    const tangents = points.map((point, i) => {
-      if (i === 0 && before?.fixed) return pieceTangent(before.fixed.pieces.at(-1)!, true)
-      if (i === points.length - 1 && after?.fixed) return pieceTangent(after.fixed.pieces[0])
-      return stationTangent(points[i - 1] ?? before?.points.at(-2), point, points[i + 1] ?? after?.points[1])
-    })
-    for (let i = 1; i < points.length; i++) {
-      const result = biarc(points[i - 1], points[i], tangents[i - 1], tangents[i])
-      if (!result) invalid = true
-      pieces.push(...(result ?? [trackStraight(points[i - 1], points[i])]))
-    }
+    const start = before?.fixed ? pieceTangent(before.fixed.pieces.at(-1)!, true) : stationTangent(before?.points.at(-2), points[0], points[1])
+    const end = after?.fixed ? pieceTangent(after.fixed.pieces[0]) : stationTangent(points.at(-2), points.at(-1)!, after?.points[1])
+    const { pieces, invalid } = alignThrough(points, start, end)
     return { section: { from: link.from, to: link.to, controls: link.controls, pieces },
       added: true, radius: invalid ? 0 : minimumRadius(pieces), junction: false }
   })
@@ -99,11 +110,11 @@ export function alignmentMetrics(track: TrackSection[]) {
     radius: radii.length ? Math.min(...radii) : null }
 }
 
-export function legacyRestricted(line: Line) {
+export function legacyRestricted(line: Line, hongKong = false) {
   return line.track.some((section, index) => {
     if (!section.legacy) return false
     const following = line.track[index + 1] ?? (line.circular ? line.track[0] : undefined)
-    return radiusStatus(minimumRadius(section.pieces)) === 'invalid' || Boolean(following?.legacy &&
+    return radiusStatus(minimumRadius(section.pieces), hongKong) === 'invalid' || Boolean(following?.legacy &&
       !tangentsAgree(pieceTangent(section.pieces.at(-1)!, true), pieceTangent(following.pieces[0])))
   })
 }

@@ -1,17 +1,18 @@
-import { alignTrack, allTrack, headAnchor, legacyRestricted, openEndOf, sectionKey, tailAnchor, trackHits } from './alignment.ts'
+import { alignThrough, alignTrack, allTrack, headAnchor, legacyRestricted, openEndOf, sectionKey, tailAnchor, trackHits } from './alignment.ts'
 import { getCity } from './city.ts'
-import { canAfford, HKD, interchangePrice, measurePieces, trackMethods } from './economy.ts'
+import { canAfford, HKD, interchangePrice, measurePieces, trackMethods, trackUpkeepMinute } from './economy.ts'
 import type { EngineeringError } from './economy.ts'
 import { distance } from './geometry.ts'
 import { hongKongName, hongKongSiteSurface } from './hongKong.ts'
 import { DWELL, pairsOf, stationPreview, stationSiteError, TRAIN_SPEED } from './network.ts'
 import type { StationSiteError } from './network.ts'
-import { curveSpeedKmh, ENGINEERING, pieceLength, radiusStatus, trackLength, trackProfile } from './track.ts'
+import { lineRailPath, railUsers, resolveRails } from './rails.ts'
+import { curveSpeedKmh, ENGINEERING, pieceLength, pieceTangent, radiusStatus, reverseRailPath, trackCurves, trackLength, trackProfile } from './track.ts'
 import type { City, GameState, Line, LineDesign, Point, Station, TrackMethod, TrackSection } from './types.ts'
 
 export type PlanningError = StationSiteError | 'tooClose' | 'invalidStops' | 'needsStops' |
   'invalidColor' | 'curve' | 'controlPoint' | 'noTrack' | 'differentTrack' | 'funds' | 'invalidMethod' | 'openLoop' | 'waterAlignmentEnd' |
-  EngineeringError
+  'invalidReuse' | 'railJunction' | EngineeringError
 
 export const maxNameLength = 36
 export const colorPattern = /^#[a-f\d]{6}$/i
@@ -71,7 +72,82 @@ export function quoteInsertion(game: GameState, point: Point, lineIds: string[])
   return { station: { ...station, interchange }, hits, cost, error: canAfford(game, cost) ? undefined : 'funds' as const }
 }
 
+export function planStationMoves(game: GameState, moves: Record<string, Point>) {
+  const city = getCity(game.cityId)
+  const targets = new Map<string, Point>()
+  let cost = 0
+  for (const [id, target] of Object.entries(moves)) {
+    const existing = game.stations.find((station) => station.id === id)
+    if (!existing) return { cost, error: 'invalidStops' as PlanningError }
+    const siteError = stationSiteError(city, target)
+    if (siteError) return { cost, error: siteError }
+    const point = roundPoint(target)
+    if (distance(existing.position, point) > 1e-6) targets.set(id, point)
+  }
+  if (!targets.size) return { game, cost, affected: new Set<string>(), changed: new Set<string>(), trackMoveCosts: new Map<string, number>() }
+  const stations = game.stations.map((station) => targets.has(station.id) ? { ...station, position: targets.get(station.id)! } : station)
+  for (const station of stations) {
+    if (!targets.has(station.id)) continue
+    const preview = stationPreview(city, { ...game, stations }, station.position, station.id, station.method)
+    if (preview.error) return { cost, error: preview.error }
+    station.district = preview.district
+    cost += Math.round(preview.cost * .25)
+  }
+  const infrastructure = { ...game.infrastructure }
+  const changed = new Set<string>()
+  const trackMoveCosts = new Map<string, number>()
+  for (const [id, section] of Object.entries(infrastructure)) {
+    const from = targets.get(section.from), to = targets.get(section.to)
+    if (!from && !to) continue
+    const start = section.pieces[0], end = section.pieces.at(-1)!
+    const points = [from ?? start.from, ...section.controls, to ?? end.to]
+    const shaped = alignThrough(points, pieceTangent(start), pieceTangent(end, true))
+    if (shaped.invalid) return { cost, error: 'curve' as PlanningError }
+    const method = section.method ?? start.method ?? 'underground'
+    const pieces = shaped.pieces.map((piece) => ({ ...piece, method }))
+    const measure = measurePieces(city, pieces, method)
+    if (measure.error) return { cost, error: measure.error }
+    const addition = Math.max(0, measure.price - measurePieces(city, section.pieces, section.method).price)
+    cost += addition
+    trackMoveCosts.set(id, addition)
+    infrastructure[id] = { ...section, pieces, method, builtCost: measure.price }
+    changed.add(id)
+  }
+  const affected = new Set<string>()
+  const lines = game.lines.map((line) => {
+    if (!allTrack(line).some((section) => section.rails?.some((rail) => changed.has(rail.id)))) return line
+    affected.add(line.id)
+    const resolve = (section: TrackSection) => section.rails ? resolveRails(infrastructure, section.rails, section.from, section.to) ?? section : section
+    const track = line.track.map(resolve)
+    const { head, tail } = line.openEnds ?? {}
+    return { ...line, track, ...(line.openEnds ? { openEnds: { ...(head ? { head: resolve(head) } : {}), ...(tail ? { tail: resolve(tail) } : {}) } } : {}) }
+  })
+  return { game: { ...game, stations, lines, infrastructure }, cost, affected, changed, trackMoveCosts }
+}
+
 export function quoteLine(game: GameState, design: LineDesign, existing?: Line) {
+  const move = game.hongKong && design.stationMoves && Object.keys(design.stationMoves).length ? planStationMoves(game, design.stationMoves) : undefined
+  const network = move?.game ?? game
+  const current = existing ? network.lines.find((line) => line.id === existing.id) ?? existing : undefined
+  const quote = quoteAlignment(network, design, current)
+  const previewed = new Set(quote.rows.flatMap(({ section }) => section.rails?.map((rail) => rail.id) ?? []))
+  const keptByOtherServices = move?.game && railUsers(network.lines.filter((line) => line.id !== existing?.id))
+  const replacedMoveCost = move?.trackMoveCosts ? [...move.trackMoveCosts].reduce((sum, [id, amount]) =>
+    previewed.has(id) || keptByOtherServices && keptByOtherServices.has(id) ? sum : sum + amount, 0) : 0
+  const stationMoveCost = move?.game ? move.cost - replacedMoveCost : 0
+  const cost = quote.cost + stationMoveCost
+  const error = move?.error ?? quote.error ?? (canAfford(game, cost) ? undefined : 'funds' as const)
+  const movedCurves = move?.changed && network.infrastructure && keptByOtherServices ? [...move.changed].filter((id) =>
+    !previewed.has(id) && keptByOtherServices.has(id)).flatMap((id) => {
+    const section = network.infrastructure![id]
+    return trackCurves(section.pieces).filter(({ radius }) => radius < ENGINEERING.restrictedRadius)
+      .map((curve) => ({ ...curve, from: section.from, to: section.to }))
+  }) : []
+  return { ...quote, cost, stationMoveCost, error, remaining: game.funds - cost,
+    restrictions: [...quote.restrictions, ...movedCurves], relocation: move?.game ? move : undefined }
+}
+
+function quoteAlignment(game: GameState, design: LineDesign, existing?: Line) {
   const city = getCity(game.cityId)
   const newStations: Station[] = []
   const positions = new Map(game.stations.map((station) => [station.id, station.position]))
@@ -93,7 +169,14 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
     const station = siteError || newStation(city, { ...game, stations: game.stations.concat(newStations) }, point, stop,
       game.nextId + newStations.length, design.stationMethods?.[stop] ?? design.method)
     if (typeof station === 'string') invalid(station)
-    else newStations.push(station)
+    else {
+      if (design.stationNames?.[stop] && city.hongKong) {
+        const names = design.stationNames[stop]
+        station.names = { en: names.en.trim().slice(0, maxNameLength) || station.names!.en, zh: names.zh.trim().slice(0, maxNameLength) || station.names!.zh }
+        station.namePinned = true
+      }
+      newStations.push(station)
+    }
   }
   const open = city.hongKong ? design.alignmentEnds ?? openEndPoints(existing) : {}
   const heads = open.head?.map(roundPoint) ?? []
@@ -137,15 +220,37 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
     point.x >= 0 && point.x <= city.width && point.y >= 0 && point.y <= city.height)
   if (!goodControls) invalid('controlPoint')
   const prior = existing && { ...existing, track: allTrack(existing) }
+  const fixed = new Map<string, TrackSection | undefined>()
+  const explicitReuse = new Set<string>()
+  if (city.hongKong && game.infrastructure) for (const [from, to] of pairsOf(route, design.circular)) {
+    const key = sectionKey(from, to), reverse = sectionKey(to, from)
+    const chosen = design.reuse?.[key] ?? (design.reuse?.[reverse] && reverseRailPath(design.reuse[reverse]))
+    if (chosen && !chosen.length) { fixed.set(key, undefined); continue }
+    const hadSection = prior?.track.some((section) => section.from === from && section.to === to || section.to === from && section.from === to)
+    const retained = existing && !hadSection && !handles[key] && !handles[reverse] &&
+      (lineRailPath(game, existing, from, to, 1) ?? lineRailPath(game, existing, from, to, -1))
+    const references = chosen ?? (retained || undefined)
+    if (!references) continue
+    const section = resolveRails(game.infrastructure, references, from, to)
+    if (!section || !positions.has(from) || !positions.has(to) || distance(section.pieces[0].from, positions.get(from)!) > 0.012 ||
+      distance(section.pieces.at(-1)!.to, positions.get(to)!) > 0.012) {
+      if (chosen) invalid('invalidReuse')
+      continue
+    }
+    if (chosen) explicitReuse.add(key)
+    fixed.set(key, section)
+  }
   const rows = goodControls && route.every((stop) => positions.has(stop) &&
     Number.isFinite(positions.get(stop)!.x) && Number.isFinite(positions.get(stop)!.y))
-    ? alignTrack(positions, { ...design, stops: route, controls: handles }, prior) : []
+    ? alignTrack(positions, { ...design, stops: route, controls: handles }, prior, fixed) : []
+  const users = railUsers(game.lines.filter((line) => line.id !== existing?.id))
+  let reusedLength = 0
   const infrastructure = { underground: 0, elevated: 0, atGrade: 0, terrain: 0, water: 0, track: 0 }
   for (const row of rows) {
     const section = row.section
     const key = sectionKey(section.from, section.to)
     const reverse = sectionKey(section.to, section.from)
-    const nextMethod = design.methods?.[key] ?? design.methods?.[reverse]
+    const nextMethod = fixed.get(key) ? undefined : design.methods?.[key] ?? design.methods?.[reverse]
     const previous = prior?.track.find((entry) => (entry.from === section.from && entry.to === section.to) ||
       (entry.to === section.from && entry.from === section.to))
     const method = nextMethod ?? section.method ?? previous?.method ?? design.method ?? 'underground'
@@ -153,9 +258,15 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
     if (city.hongKong && (row.added || nextMethod && nextMethod !== section.method)) {
       row.added = true
       const pieces = section.pieces.map((piece) => ({ ...piece, method }))
-      row.section = { ...section, method, pieces }
+      row.section = { ...section, method, pieces, rails: undefined }
     }
-    if (!row.added) continue
+    if (!row.added) {
+      const references = row.section.rails ?? []
+      const shared = references.filter((rail) => users.has(rail.id))
+      row.reused = explicitReuse.has(key) || shared.length > 0
+      reusedLength += shared.reduce((length, rail) => length + trackLength(game.infrastructure![rail.id].pieces), 0)
+      continue
+    }
     const measure = measurePieces(city, row.section.pieces, method)
     if (measure.error) invalid(measure.error)
     for (const method of trackMethods) infrastructure[method] += measure.methods[method]
@@ -164,12 +275,17 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
     infrastructure.track += measure.price
     if (city.hongKong) row.section = { ...row.section, builtCost: measure.price }
   }
-  if (rows.some((row) => row.added && radiusStatus(row.radius) === 'invalid')) invalid('curve')
-  const interchanges = design.autoInterchanges ? game.stations.filter((station) =>
+  for (const [index, row] of rows.entries()) {
+    const following = rows[index + 1] ?? (design.circular ? rows[0] : undefined)
+    if (row.junction && following && [row, following].some(({ section }) => explicitReuse.has(sectionKey(section.from, section.to)))) invalid('railJunction')
+    if (explicitReuse.has(sectionKey(row.section.from, row.section.to)) && row.radius === 0) invalid('railJunction')
+    if (row.added && radiusStatus(row.radius, !!city.hongKong) === 'invalid') invalid('curve')
+  }
+  const interchanges = city.hongKong || design.autoInterchanges ? game.stations.filter((station) =>
     !station.interchange && seen.has(station.id) && !existing?.stops.includes(station.id) &&
     game.lines.some((line) => line.id !== existing?.id && line.stops.includes(station.id))) : []
   const stationsCost = newStations.reduce((sum, station) => sum + station.builtCost, 0)
-  const interchangeCost = interchanges.length * interchangePrice(game)
+  const interchangeCost = city.hongKong ? 0 : interchanges.length * interchangePrice(game)
   const cost = infrastructure.track + stationsCost + interchangeCost
   if (!canAfford(game, cost)) invalid('funds')
   const radii = rows.flatMap((row) => row.added && row.radius !== null ? [row.radius] : [])
@@ -180,8 +296,14 @@ export function quoteLine(game: GameState, design: LineDesign, existing?: Line) 
   const methodSpeeds = rows.flatMap(({ section }) => section.pieces.flatMap(({ method }) => method ? [HKD.methods[method].speedKmh] : []))
   const travel = rows.reduce((total, row) => openEndOf(row.section) || row.radius === 0 && row.added ? total :
     total + trackProfile(row.section, TRAIN_SPEED, 1).duration + DWELL, 0)
-  return { rows, newStations, interchanges, cost, infrastructure, stationsCost, interchangeCost, remaining: game.funds - cost,
+  const serviceLength = rows.reduce((total, row) => openEndOf(row.section) ? total : total + trackLength(row.section.pieces), 0)
+  const newUpkeep = rows.reduce((total, row) => row.added ? total + trackUpkeepMinute(row.section) : total, 0)
+  const operatingHourly = Math.round(60 * (newUpkeep + (travel ? HKD.crewMinute + serviceLength / 100 / travel * HKD.travelCostKm : 0) +
+    newStations.length * (travel ? HKD.stationMinute : HKD.idleStationMinute) + (travel ? interchanges.length * 36 : 0)))
+  const restrictions = rows.flatMap(({ section }) => trackCurves(section.pieces).filter(({ radius }) => radius < ENGINEERING.restrictedRadius)
+    .map((curve) => ({ ...curve, from: section.from, to: section.to })))
+  return { rows, newStations, interchanges, cost, infrastructure, stationsCost, interchangeCost, reusedLength, operatingHourly, restrictions, remaining: game.funds - cost,
     radius, totalRadius: allRadii.length ? Math.min(...allRadii) : null,
     length, limit: Math.min(ENGINEERING.designSpeedKmh, ...curvedSpeeds, ...methodSpeeds), travel,
-    legacy: Boolean(existing && legacyRestricted(existing) && rows.some((row) => row.section.legacy)), error }
+    legacy: Boolean(existing && legacyRestricted(existing, !!city.hongKong) && rows.some((row) => row.section.legacy)), error }
 }

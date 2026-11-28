@@ -27,6 +27,8 @@ interface StationSites {
   names: [en: string, zh: string, anchors: [x: number, y: number, reach: number][]][]
 }
 
+type OfficialStationNames = [code: string, en: string, zh: string, anchors: [x: number, y: number, reach: number][]][]
+
 async function loadGeography<T>(file: string): Promise<T> {
   const asset = 'data/hong-kong/' + file
   if (typeof location !== 'undefined') {
@@ -39,7 +41,8 @@ async function loadGeography<T>(file: string): Promise<T> {
   return JSON.parse(await readFile(new URL('../../public/' + asset, import.meta.url), 'utf8'))
 }
 
-const [map, stationSites] = await Promise.all([loadGeography<RawMap>('model.json'), loadGeography<StationSites>('station-sites.json')])
+const [map, stationSites, mtrNames] = await Promise.all([loadGeography<RawMap>('model.json'),
+  loadGeography<StationSites>('station-sites.json'), loadGeography<OfficialStationNames>('mtr-stations.json')])
 const coordinate = ([x, y]: number[]): Point => ({ x, y })
 const gap = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
 const zones = map.zones.map(([id, x, y, en, zh, residents, jobs, students, shops, health, leisure, areaKm2, shape]) => ({
@@ -190,13 +193,33 @@ const stationReferences = stationSites.names.flatMap(([en, zh, anchors]) => {
   return anchors.map(([x, y, reach]) => ({ en, zh, x, y, reach, origin }))
 })
 
-export function hongKongName(point: Point, previous: Station[]): BilingualName {
-  let reference: typeof stationReferences[number] | undefined
+const mtrReferences = mtrNames.flatMap(([code, en, zh, anchors]) => {
+  const origin = coordinate(anchors[0])
+  const local = code === 'HKU' ? stationSites.names.find(([name]) => name === 'HKU')?.[2] ?? [] : []
+  return [...anchors, ...local].map(([x, y, reach]) => ({ code, en, zh, x, y, reach, origin }))
+})
+
+function nearestReference<T extends Point & { reach: number }>(point: Point, references: T[]) {
+  let reference: T | undefined
   let nearest = Infinity
-  for (const anchor of stationReferences) {
+  for (const anchor of references) {
     const distance = gap(anchor, point)
     if (distance <= anchor.reach && distance < nearest) { reference = anchor; nearest = distance }
   }
+  return reference
+}
+
+export const officialMtrStationAt = (point: Point) => nearestReference(point, mtrReferences)
+
+export function existingMtrStationAt(point: Point, stations: Station[]) {
+  const official = officialMtrStationAt(point)
+  if (!official) return undefined
+  return stations.filter(({ names }) => names && (nameKey(names.en) === nameKey(official.en) || nameKey(names.zh) === nameKey(official.zh)))
+    .sort((a, b) => gap(a.position, point) - gap(b.position, point))[0]
+}
+
+export function hongKongName(point: Point, previous: Station[]): BilingualName {
+  const reference = officialMtrStationAt(point) ?? nearestReference(point, stationReferences)
   const local = reference ? [] : placeIndex(point, 135).map((place) => ({ place, distance: gap(place, point) }))
     .filter(({ place, distance }) => distance <= reachByKind[place.kind] * 1.25)
     .sort((a, b) => (a.distance / reachByKind[a.place.kind]) ** 2 - (b.distance / reachByKind[b.place.kind]) ** 2

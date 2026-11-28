@@ -1,6 +1,6 @@
 import { clamp, distance, interpolate } from './geometry.ts'
 import { HKD } from './hongKongConfig.ts'
-import type { Direction, Line, Point, TrackPiece, TrackSection } from './types.ts'
+import type { Direction, Line, Point, RailReference, TrackPiece, TrackSection } from './types.ts'
 
 export const ENGINEERING = Object.freeze({
   metersPerUnit: 10,
@@ -61,11 +61,16 @@ export function reversePiece(piece: TrackPiece): TrackPiece {
     : { ...piece, from: piece.to, to: piece.from }
 }
 
+export function reverseRailPath(path: RailReference[]): RailReference[] {
+  return path.slice().reverse().map(({ id, direction }) => ({ id, direction: direction === 1 ? -1 : 1 }))
+}
+
 export function reverseSection(section: TrackSection): TrackSection {
   return {
     ...section, from: section.to, to: section.from,
     controls: section.controls.slice().reverse(),
     pieces: section.pieces.map(reversePiece).reverse(),
+    ...(section.rails ? { rails: reverseRailPath(section.rails) } : {}),
   }
 }
 
@@ -187,11 +192,36 @@ export function minimumRadius(pieces: TrackPiece[]): number | null {
   return Number.isFinite(radius) ? radius : null
 }
 
-export function radiusStatus(radius: number | null) {
+export function radiusStatus(radius: number | null, hongKong = false) {
   if (radius === null || radius >= ENGINEERING.preferredRadius) return 'good'
   if (radius >= ENGINEERING.restrictedRadius) return 'caution'
-  if (radius >= ENGINEERING.minimumRadius - ENGINEERING.radiusTolerance) return 'restricted'
+  if (hongKong ? radius > 0 : radius >= ENGINEERING.minimumRadius - ENGINEERING.radiusTolerance) return 'restricted'
   return 'invalid'
+}
+
+export interface TrackCurve {
+  pieces: TrackPiece[]
+  point: Point
+  radius: number
+}
+
+export function trackCurves(pieces: TrackPiece[]): TrackCurve[] {
+  const curves: TrackCurve[] = []
+  let current: TrackCurve | undefined
+  let previous: Extract<TrackPiece, { kind: 'arc' }> | undefined
+  for (const piece of pieces) {
+    if (piece.kind === 'straight') { current = undefined; previous = undefined; continue }
+    const radius = unitsToMeters(piece.radius)
+    if (!current || !previous || Math.sign(previous.sweep) !== Math.sign(piece.sweep) ||
+      !tangentsAgree(pieceTangent(previous, true), pieceTangent(piece))) {
+      current = { pieces: [], point: pointOnPiece(piece, .5), radius }
+      curves.push(current)
+    }
+    current.pieces.push(piece)
+    if (radius < current.radius) { current.radius = radius; current.point = pointOnPiece(piece, .5) }
+    previous = piece
+  }
+  return curves
 }
 
 export function curveSpeedKmh(radius: number | null) {
@@ -211,6 +241,20 @@ export function trackPath(pieces: TrackPiece[]) {
     return 'A' + radius + ',' + radius + ' 0 ' + (Math.abs(piece.sweep) > Math.PI ? 1 : 0) + ',' +
       (piece.sweep > 0 ? 1 : 0) + ' ' + point(piece.to)
   }).join('')
+}
+
+export function offsetTrackPath(pieces: TrackPiece[], offset: number) {
+  if (!offset) return trackPath(pieces)
+  const points: Point[] = []
+  for (const piece of pieces) {
+    const divisions = piece.kind === 'arc' ? Math.max(1, Math.ceil(Math.abs(piece.sweep) / .12)) : 1
+    for (let step = points.length ? 1 : 0; step <= divisions; step++) {
+      const { x, y, angle } = pointOnPiece(piece, step / divisions)
+      const direction = angle * Math.PI / 180
+      points.push({ x: x - offset * Math.sin(direction), y: y + offset * Math.cos(direction) })
+    }
+  }
+  return points.map(({ x, y }, index) => (index ? 'L' : 'M') + x.toFixed(3) + ',' + y.toFixed(3)).join('')
 }
 
 type SpeedNode = { offset: number; velocity: number; minute: number }

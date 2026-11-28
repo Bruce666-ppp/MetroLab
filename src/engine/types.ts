@@ -68,6 +68,11 @@ export interface Line {
 export type TrackPiece = ({ kind: 'straight'; from: Point; to: Point }
   | { kind: 'arc'; from: Point; to: Point; center: Point; radius: number; sweep: number }) & { method?: TrackMethod }
 
+export interface RailReference {
+  id: string
+  direction: Direction
+}
+
 export interface TrackSection {
   from: string
   to: string
@@ -76,6 +81,7 @@ export interface TrackSection {
   legacy?: true
   method?: TrackMethod
   builtCost?: number
+  rails?: RailReference[]
 }
 
 export interface Leg {
@@ -157,6 +163,7 @@ export interface GameState {
   nextId: number
   stations: Station[]
   lines: Line[]
+  infrastructure?: Record<string, TrackSection>
   trains: Train[]
   queues: Record<string, PassengerGroup[]>
   egress: PassengerGroup[]
@@ -187,4 +194,7 @@ export interface LineDesign {
   methods?: Record<string, TrackMethod>
   stationMethods?: Record<string, TrackMethod>
   alignmentEnds?: Partial<Record<'head' | 'tail', Point[]>>
+  reuse?: Record<string, RailReference[]>
+  stationMoves?: Record<string, Point>
+  stationNames?: Record<string, BilingualName>
 }

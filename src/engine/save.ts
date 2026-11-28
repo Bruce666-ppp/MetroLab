@@ -4,6 +4,7 @@ import { blankTotals, HKD, trackMethods } from './economy.ts'
 import { distance } from './geometry.ts'
 import { HONG_KONG } from './hongKong.ts'
 import { pairsOf } from './network.ts'
+import { resolveRails, synchronizeRails } from './rails.ts'
 import { blankOperations, SAVE_VERSION } from './simulation.ts'
 import { pieceLength, pointOnPiece } from './track.ts'
 import type { GameState, Layer, Point, TrackSection } from './types.ts'
@@ -109,6 +110,29 @@ function validGame(game: GameState, requireTrack: boolean) {
       Array.isArray(train.loads) && Number.isFinite(train.duration) && Number.isFinite(train.remaining))
 }
 
+function restoreRails(game: GameState) {
+  const infrastructure = game.infrastructure
+  if (!infrastructure || Array.isArray(infrastructure) || !Object.entries(infrastructure).every(([id, section]) =>
+    /^track-\d+$/.test(id) && typeof section?.from === 'string' && typeof section.to === 'string' && !section.rails &&
+    validSection(section, section.from, section.to))) return false
+  const restore = (section: TrackSection) => Array.isArray(section.rails) && section.rails.every((rail) =>
+    typeof rail?.id === 'string' && (rail.direction === 1 || rail.direction === -1))
+    ? resolveRails(infrastructure, section.rails, section.from, section.to) : undefined
+  for (const line of game.lines) {
+    const track = line.track.map(restore)
+    if (track.some((section) => !section)) return false
+    line.track = track as TrackSection[]
+    for (const side of ['head', 'tail'] as const) {
+      const section = line.openEnds?.[side]
+      if (!section) continue
+      const restored = restore(section)
+      if (!restored) return false
+      line.openEnds![side] = restored
+    }
+  }
+  return validGame(game, true)
+}
+
 export function loadGame(storage: StorageIO): SaveSlot | undefined {
   try {
     const raw = storage.getItem(SAVE_KEY)
@@ -125,12 +149,25 @@ export function loadGame(storage: StorageIO): SaveSlot | undefined {
     if (slot.game.version === 2 && validGame(slot.game, false)) {
       const game = slot.game as GameState
       game.lines = game.lines.map((line) => ({ ...line, track: legacyTrack(game.stations, line) }))
-      game.version = SAVE_VERSION
+      game.version = 4
     }
-    if (slot.game.version === 3) slot.game.version = SAVE_VERSION
-    if (slot.game.version !== SAVE_VERSION || !validGame(slot.game, true)) return undefined
+    if (slot.game.version === 3) slot.game.version = 4
+    if ((slot.game.version !== 4 && slot.game.version !== SAVE_VERSION) || !validGame(slot.game, true)) return undefined
     slot.game.stationActivity ??= {}
-    if (slot.game.cityId === HONG_KONG) slot.game.hongKong ??= blankOperations()
+    if (slot.game.cityId === HONG_KONG) {
+      const game = slot.game as GameState
+      game.hongKong ??= blankOperations()
+      if (game.version === 4) {
+        game.infrastructure = {}
+        for (const line of game.lines) {
+          for (const section of line.track) delete section.rails
+          for (const section of Object.values(line.openEnds ?? {})) if (section) delete section.rails
+        }
+        synchronizeRails(game)
+        for (const station of game.stations) if (game.lines.filter((line) => line.stops.includes(station.id)).length > 1) station.interchange = true
+      } else if (!restoreRails(game)) return undefined
+    }
+    slot.game.version = SAVE_VERSION
     return slot as SaveSlot
   } catch {
     return undefined

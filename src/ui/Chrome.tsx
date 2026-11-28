@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Activity, Banknote, Building2, ChevronRight, CircleHelp, Clock3, Compass, Flag, Globe2,
-  Heart, MapPin, MapPinPlus, Moon, MousePointer2, Pause, Play, Route, Settings2, Sun, TrainFront, Undo2, Users } from 'lucide-react'
+  Heart, MapPin, MapPinPlus, Moon, MousePointer2, Pause, Play, Redo2, Route, Settings2, Sun, TrainFront, Undo2, Users } from 'lucide-react'
 import { minuteOfDay } from '../engine/city.ts'
 import { demandPeriod } from '../engine/hongKongDemand.ts'
 import type { gameMetrics } from '../engine/analytics.ts'
@@ -71,9 +71,9 @@ export function Indicators({ game, metrics }: { game: GameState; metrics: Return
   </section>
 }
 
-export function Tools({ tool, playing, select, undo, canUndo, canCancel, cancel }: {
-  tool: Tool; playing: boolean; select: (tool: Tool) => void; undo: () => void
-  canUndo: boolean; canCancel: boolean; cancel: () => void
+export function Tools({ tool, playing, select, undo, redo, canUndo, canRedo, canCancel, cancel }: {
+  tool: Tool; playing: boolean; select: (tool: Tool) => void; undo: () => void; redo: () => void
+  canUndo: boolean; canRedo: boolean; canCancel: boolean; cancel: () => void
 }) {
   const { t } = useTranslation()
   const tools = [
@@ -92,6 +92,9 @@ export function Tools({ tool, playing, select, undo, canUndo, canCancel, cancel 
     <hr />
     <button type="button" className="tool-button" disabled={!canUndo} title={t('common.undo')} onClick={undo}>
       <Undo2 size={19} /><span>{t('common.undo')}</span>
+    </button>
+    <button type="button" className="tool-button" disabled={!canRedo} title={t('service.redo')} onClick={redo}>
+      <Redo2 size={19}/><span>{t('service.redo')}</span>
     </button>
     {canCancel && <button type="button" className="rail-cancel" onClick={cancel}>{t('common.cancel')}</button>}
   </nav>

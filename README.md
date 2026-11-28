@@ -13,10 +13,12 @@ MetroLab is a browser-based railway planning and operations game set on Hong Kon
 1. Start **Career** with HKD 38 billion or **Sandbox** with unlimited construction funding. Explore the city map and the population, employment and travel demand layers. Select a statistical area to see the modelled trips it generates.
 2. Choose **Draw line**. Ordinary clicks add alignment points. Shift-click or use the station button in the planning dock to add an explicit stop. The map previews a station name at the cursor and labels each added stop. You can confirm track first, then add stations later. Start from an eligible existing terminal to extend its line.
 3. Select underground, elevated or at-grade construction. Underground construction can cross Victoria Harbour as a marine tunnel with both ends on land. The preview gives alignment length, engineering constraints and remaining budget. The line editor shows the cost by method, site works, marine tunnel and station works. Confirm the plan to spend the quoted amount.
-4. Choose **Build station** for a standalone station or to insert a stop on built track. Select the participating lines where alignments overlap. Stations receive editable Chinese and English names from their surroundings. Place stations on playable land outside water, parks, scenic sites and protected areas. Use the inspector to edit alignments, extend or remove track, or relocate stations.
+4. Choose **Build station** for a standalone station or to insert a stop on built track. Near an MTR station, new stops use its official English and Traditional Chinese names. Click an existing station while drawing to serve it on the same platform. In the line editor choose separate track or an existing alignment between stops. Each service keeps its own stop order and train operations.
 5. Buy trains and set the dispatch interval and fare. Run the clock, then use the operating dashboard and passenger-flow map to check service, crowding and the daily balance. Each completed journey earns its fare. Active service, trains, tracks and stations introduce operating costs.
 
-**V** inspects the map, **S** opens the station tool, **L** draws a line, **Space** runs or pauses the clock, and **Esc** cancels. **Ctrl/⌘+Z** undoes draft edits or recent construction while time is paused. Drag to pan and use the wheel or zoom buttons to zoom. The map can switch between raised and plan views.
+Select a line and choose **Edit line** to drag stations or diamond control points, change stops, rename a station, or switch a segment to shared track. Review the construction quote and the list of curves under 400 m before saving. Slow curves can be built and carry speed limits. Click a shared track to see its services.
+
+**V** inspects the map, **S** opens the station tool, **L** draws a line, **Space** runs or pauses the clock, and **Esc** cancels. **Ctrl/⌘+Z** undoes an edit and **Ctrl/⌘+Shift+Z** reapplies it. A saved editing session is one step in the main workspace. Drag the map to pan and use the wheel or zoom buttons to zoom.
 
 ![A proposed cross-harbour alignment and live construction quotation](docs/images/hong-kong-construction.png)
 
@@ -24,7 +26,7 @@ MetroLab is a browser-based railway planning and operations game set on Hong Kon
 
 The map combines official Lands Department terrain, surveyed building footprints and names with OpenStreetMap roads, shoreline and places. It uses 2021 Census population for 105 playable statistical areas and the Planning Department's 2021 employment estimates for nine districts. Grid allocation and travel demand are model estimates. The demand model follows residential, employment, school, retail, health and leisure patterns calibrated against the Transport Department travel survey. [The data guide](docs/HONG-KONG-DATA.md)
 
-The game uses a single LocalStorage slot with timed autosaves and manual save, load and reset in Settings. Schema 4 opens existing Marlow saves from schemas 1–3. English and Hong Kong Traditional Chinese switch independently of the game state. The V2.0 construction and operations are available in the Hong Kong scenario.
+The game uses a single LocalStorage slot with timed autosaves and manual save, load and reset in Settings. Schema 5 migrates earlier Hong Kong and Marlow saves. English and Hong Kong Traditional Chinese switch independently of the game state.
 
 ## Development and publishing
 

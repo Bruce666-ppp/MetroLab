@@ -8,9 +8,9 @@ MetroLab is an original urban rail planning game. Preserve its construction and 
 - Make network edits through `applyAction`. It validates geography, topology and budget and returns an atomic result. Use `advanceGame` for deterministic clock changes.
 - Keep simulated trip generation, route choices, queues, train movement, arrivals and fare accounting causally linked. Add explicit simulation inputs when new metrics need them.
 - Keep geographic crossings distinct from stations shared by lines. Require an interchange for passenger transfers.
-- Store each line's ordered station-to-station sections as persistent straight and circular pieces. Use those pieces for the SVG, track length, terrain cost, snapping, speed profiles and passenger routing. Keep all engineering in planimetric coordinates at 10 meters per world unit. The city renderer displaces roofs and facades above this plane.
-- Keep the minimum new curve radius and the game speed and acceleration parameters in ENGINEERING in track.ts. Validate new and rebuilt sections, including connections to existing tangents. Preserve confirmed sections when extending a line. Render legacy corners with an engineering warning.
-- Add save migrations when stored values change. Keep active operations, queues and player-defined names intact. Schema 4 imports Marlow schemas 1–3. The original octilinear alignment and legacy running profile are retained when migrating schema 1 or 2.
+- Store each line's ordered station-to-station sections as persistent straight and circular pieces. In Hong Kong, service sections resolve their geometry from ordered, directional physical track references. Use the same pieces for the SVG, length, costs, snapping, speed profiles and passenger routing. Keep all engineering in planimetric coordinates at 10 meters per world unit.
+- Keep curve rules and the game speed and acceleration parameters in ENGINEERING in track.ts. In Hong Kong, continuous curves below 400 m qualify for a speed restriction and can be built. Validate junction continuity and preserve confirmed sections when extending a line.
+- Add save migrations when stored values change. Keep active operations, queues and player-defined names intact. Schema 5 assigns physical track IDs when importing Hong Kong schema 4. It also imports earlier Marlow schemas with their original geometry.
 - Use English for source identifiers, comments, filenames and commit messages.
 
 ## Map and interface
