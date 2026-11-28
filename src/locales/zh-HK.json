@@ -364,6 +364,7 @@
     "notFound": "該對象已不存在。",
     "outOfBounds": "請選擇城市範圍內的位置。",
     "water": "站點必須建在陸地。",
+    "restrictedStationSite": "公園、景區及保護區內不可興建車站。",
     "tooClose": "此位置離現有站點過近。",
     "needsStops": "請增加停靠站點後再建設線路。",
     "invalidStops": "每個停靠站必須是不同的現有站點。",

@@ -9,7 +9,7 @@ import { getCity } from '../engine/city.ts'
 import { canAfford, trainRefund } from '../engine/economy.ts'
 import { distance } from '../engine/geometry.ts'
 import { HONG_KONG, surfaceAt } from '../engine/hongKong.ts'
-import { stationGap, stationPreview } from '../engine/network.ts'
+import { stationGap, stationPreview, stationSiteError } from '../engine/network.ts'
 import { quoteInsertion, quoteLine, roundPoint } from '../engine/planning.ts'
 import { clearGame, loadGame, saveGame, saveSettings } from '../engine/save.ts'
 import type { Settings } from '../engine/save.ts'
@@ -236,6 +236,12 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       return
     }
     let next = state.hongKong ? appendHongKongStop(state, active, id, point, tolerance) : appendDraftStop(active, id, point)
+    if (state.hongKong && point) {
+      const city = getCity(state.cityId)
+      const siteError = stationSiteError(city, roundPoint(point))
+        ?? stationPreview(city, state, roundPoint(next.proposed[id]), undefined, active.method).error
+      if (siteError) { setNotice({ key: 'error.' + siteError, error: true }); return }
+    }
     if (active.kind === 'draw' && !active.stops.length && !point && !active.pending.length) {
       const line = extensionChoices(state, id)[0]
       next = { ...next, anchor: id, id: line?.id, name: line?.name ?? '',
@@ -292,6 +298,14 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       if (target.selection?.type === 'station') { pick(target.selection); return }
       if (target.trackPoint && target.trackLines?.length) {
         const { trackPoint: point, trackLines: available } = target
+        if (city.hongKong) {
+          const siteError = stationSiteError(city, point)
+          if (siteError) {
+            setInsertion(undefined)
+            setNotice({ key: 'error.' + siteError, error: true })
+            return
+          }
+        }
         if (available.length > 1 || city.hongKong) setInsertion({ point, available, chosen: [available[0]] })
         else insertStation(point, available)
         return
@@ -321,9 +335,7 @@ export function App({ storage, initialSettings }: { storage: StorageIO; initialS
       } else if (city.hongKong) {
         if (target.selection?.type === 'station' && !active.placingControl) addStop(target.selection.id)
         else if (target.shift || active.placingStation) {
-          const preview = stationPreview(city, state, target.point, undefined, active.method)
-          if (preview.error) setNotice({ key: 'error.' + preview.error, error: true })
-          else addStop('draft-' + nextDraftId.current++, target.point, target.surveyTolerance)
+          addStop('draft-' + nextDraftId.current++, target.point, target.surveyTolerance)
         } else if (surfaceAt(target.point) === 'outside') setNotice({ key: 'error.outsideArea', error: true })
         else if (active.kind === 'edit' && active.insertion === undefined && active.stops.length >= 2 && !active.alignmentEnds?.head && !active.alignmentEnds?.tail) {
           editDraft(addGeometryControl(state, active, target.point))

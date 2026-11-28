@@ -364,6 +364,7 @@
     "notFound": "That item is no longer available.",
     "outOfBounds": "Choose a location inside the city.",
     "water": "Stations must be built on land.",
+    "restrictedStationSite": "Stations cannot be built inside parks, protected areas or scenic sites.",
     "tooClose": "Move farther from the nearest station.",
     "needsStops": "Add more stations before building this line.",
     "invalidStops": "Each stop must be a different existing station.",

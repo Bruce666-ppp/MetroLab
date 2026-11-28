@@ -2,7 +2,7 @@ import { districtAt, jobsOf, populationOf } from './city.ts'
 import { stationGroundError, stationPrice } from './economy.ts'
 import type { EngineeringError } from './economy.ts'
 import { distance, isWater, walkDistance } from './geometry.ts'
-import { surfaceAt, walkCells, walkingMinutes, walkRadius } from './hongKong.ts'
+import { hongKongStationSiteError, walkCells, walkingMinutes, walkRadius } from './hongKong.ts'
 import { ENGINEERING, kmhToUnitsPerMinute, trackLength } from './track.ts'
 import type { City, Direction, GameState, Line, Point, Station, TrackMethod } from './types.ts'
 
@@ -33,6 +33,15 @@ export function lineLength(line: Line) {
     trackLength(line.openEnds?.head?.pieces ?? []) + trackLength(line.openEnds?.tail?.pieces ?? [])
 }
 
+export type StationSiteError = NonNullable<ReturnType<typeof hongKongStationSiteError>>
+
+export function stationSiteError(city: City, position: Point): StationSiteError | undefined {
+  if (city.hongKong) return hongKongStationSiteError(position)
+  if (!Number.isFinite(position.x) || !Number.isFinite(position.y) ||
+    position.x < 14 || position.x > city.width - 14 || position.y < 14 || position.y > city.height - 14) return 'outOfBounds'
+  if (isWater(city, position, 6)) return 'water'
+}
+
 export function stationPreview(city: City, game: GameState, position: Point, ignore?: string, method?: TrackMethod) {
   const { area } = districtAt(city, position)
   const level = game.stations.find((station) => station.id === ignore)?.level ?? 1
@@ -54,14 +63,8 @@ export function stationPreview(city: City, game: GameState, position: Point, ign
       jobs += Math.round(jobsOf(district, game) * share)
     }
   }
-  let error: 'outOfBounds' | 'water' | 'tooClose' | EngineeringError | undefined
-  if (!Number.isFinite(position.x) || !Number.isFinite(position.y) ||
-    position.x < 0 || position.x > city.width || position.y < 0 || position.y > city.height ||
-    (city.hongKong ? surfaceAt(position) === 'outside' : position.x < 14 || position.x > city.width - 14 || position.y < 14 || position.y > city.height - 14)) {
-    error = 'outOfBounds'
-  } else if (isWater(city, position, 6)) {
-    error = 'water'
-  } else if (game.stations.some((station) => station.id !== ignore && distance(station.position, position) < stationGap(city))) {
+  let error: StationSiteError | 'tooClose' | EngineeringError | undefined = stationSiteError(city, position)
+  if (!error && game.stations.some((station) => station.id !== ignore && distance(station.position, position) < stationGap(city))) {
     error = 'tooClose'
   }
   if (!error && city.hongKong && method) error = stationGroundError(position, method)

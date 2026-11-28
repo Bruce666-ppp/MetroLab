@@ -27,6 +27,9 @@ const hoverName = (page) => page.getByTestId('draft-station-preview-name')
 const central = [635.2, 911.6]
 const tsimShaTsui = [798.4, 722.9]
 const kennedyTown = [303.5, 907.4]
+const hku = [400.5, 887.8]
+const shekTongTsui = [407.3, 870.4]
+const peakGarden = [490.6, 1001]
 const start = [944, 407], finish = [1004, 234]
 
 async function screen(page, point) {
@@ -107,12 +110,40 @@ try {
   const startupBudget = await page.getByTestId('metric-budget').innerText()
   assert.match(startupBudget, /HKD.*38/)
   await exact(page, 'Draw line').click()
+  await moveMap(page, hku)
+  await hoverName(page).filter({ hasText: /^HKU$/ }).waitFor()
+  await clickMap(page, hku, true)
+  await moveMap(page, shekTongTsui)
+  await hoverName(page).filter({ hasText: /^Shek Tong Tsui$/ }).waitFor()
+  await clickMap(page, shekTongTsui, true)
+  const localNames = page.getByTestId('draft-station-name')
+  assert.deepEqual(await localNames.allTextContents(), ['HKU', 'Shek Tong Tsui'])
+  await exact(page, '繁中').click()
+  await localNames.filter({ hasText: /^香港大學$/ }).waitFor()
+  assert.deepEqual(await localNames.allTextContents(), ['香港大學', '石塘咀'])
+  assert.ok(await localNames.evaluateAll(([first, second]) => {
+    const a = first.getBoundingClientRect(), b = second.getBoundingClientRect()
+    return b.bottom <= a.top
+  }))
+  await screenshot(page, 'hong-kong-station-names')
+  await exact(page, 'English').click()
+  await page.keyboard.press('Escape')
+  await exact(page, 'Draw line').click()
   await moveMap(page, central)
   await hoverName(page).filter({ hasText: /^Central$/ }).waitFor()
   await moveMap(page, kennedyTown)
   await hoverName(page).filter({ hasText: /^Kennedy Town$/ }).waitFor()
   await moveMap(page, [735, 819])
   await hoverName(page).waitFor({ state: 'hidden' })
+  await clickMap(page, [735, 819], true)
+  await page.getByRole('status').filter({ hasText: 'Stations must be built on land.' }).waitFor()
+  await moveMap(page, peakGarden)
+  await hoverName(page).waitFor({ state: 'hidden' })
+  await clickMap(page, peakGarden, true)
+  const parkNotice = page.getByRole('status').filter({ hasText: 'Stations cannot be built inside parks' })
+  await parkNotice.waitFor()
+  assert.equal(await page.getByTestId('proposed-station').count(), 0)
+  await parkNotice.getByRole('button', { name: 'Close' }).click()
   await clickMap(page, central)
   await clickMap(page, [(central[0] + tsimShaTsui[0]) / 2, (central[1] + tsimShaTsui[1]) / 2])
   assert.equal(await page.getByTestId('proposed-station').count(), 0)
@@ -162,6 +193,10 @@ try {
   assert.equal(stored.today.subsidy, 0)
 
   await exact(page, 'Build station').click()
+  await moveMap(page, [1020.2, 1193.1])
+  await page.locator('.map-build-tip.invalid').getByText('Stations must be built on land.').waitFor()
+  await clickMap(page, [1020.2, 1193.1])
+  await page.getByRole('status').filter({ hasText: 'Stations must be built on land.' }).waitFor()
   await clickMap(page, kennedyTown)
   await page.getByRole('heading', { name: 'Confirm construction' }).waitFor()
   assert.equal(await stations(page).count(), 2)
@@ -188,7 +223,11 @@ try {
   await dock(page).getByRole('button', { name: 'Build alignment' }).click()
   assert.equal(await stations(page).count(), 3)
   await page.getByText('Add at least two stations to run trains on this alignment.').waitFor()
-  for (const fraction of [.23, .81]) {
+  await exact(page, 'Build station').click()
+  await clickMap(page, start.map((coordinate, i) => coordinate + (finish[i] - coordinate) * .28))
+  await page.getByRole('status').filter({ hasText: 'Stations cannot be built inside parks' }).waitFor()
+  assert.equal(await stations(page).count(), 3)
+  for (const fraction of [.18, .81]) {
     await exact(page, 'Build station').click()
     await clickMap(page, start.map((coordinate, i) => coordinate + (finish[i] - coordinate) * fraction))
     await page.getByRole('heading', { name: 'Insert station', exact: true }).waitFor()
@@ -245,7 +284,7 @@ try {
   assert.equal(await legacy.locator('.base-map text').count(), 0)
 
   assert.deepEqual(errors, [])
-  console.log('Unlabelled basemaps, live and placed station names, construction, operations, languages, mobile layout and Marlow migration passed.')
+  console.log('Unlabelled basemaps, local station names, station exclusions, construction, operations, languages, mobile layout and Marlow migration passed.')
 } finally {
   await browser.close()
 }

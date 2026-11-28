@@ -6,9 +6,8 @@ import { getCity, districtAt, minuteOfDay, populationOf } from '../engine/city.t
 import { relocationQuote } from '../engine/actions.ts'
 import { allTrack, openEndOf, sectionKey, trackHits } from '../engine/alignment.ts'
 import { canAfford, HKD } from '../engine/economy.ts'
-import { clamp, distance, isWater } from '../engine/geometry.ts'
-import { surfaceAt } from '../engine/hongKong.ts'
-import { stationCapacity, stationPreview, stationRadius, waitingAt } from '../engine/network.ts'
+import { clamp, distance } from '../engine/geometry.ts'
+import { stationCapacity, stationPreview, stationRadius, stationSiteError, waitingAt } from '../engine/network.ts'
 import { quoteInsertion, quoteLine, roundPoint, selectableInsertions } from '../engine/planning.ts'
 import { layers } from '../engine/save.ts'
 import { curveSpeedKmh, ENGINEERING, minimumRadius, pieceTangent, radiusStatus, tangentsAgree, trackColors, trackLength, trackPath, unitsToMeters } from '../engine/track.ts'
@@ -213,7 +212,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
 
   const hoveredStation = hover ? nearestStation(hover.world) : undefined
   const trackInsertion = hover && tool === 'station' && !hoveredStation ? selectableInsertions(game, hover.world, 11 / scale) : []
-  const previewPoint = insertionPoint ?? trackInsertion[0]?.point ?? hover?.world
+  const previewPoint = insertionPoint ?? trackInsertion[0]?.point ?? (hover && hongKong ? roundPoint(hover.world) : hover?.world)
   const preview = previewPoint && (tool === 'move' || tool === 'station' && !hoveredStation)
     ? stationPreview(city, game, previewPoint, tool === 'move' ? selectedStation?.id : undefined,
       tool === 'move' ? selectedStation?.method : trackInsertion.length ? undefined : stationMethod) : undefined
@@ -223,6 +222,7 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const previewCost = moveQuote?.cost ?? stationQuote?.cost ?? preview?.cost ?? 0
   const previewError = preview?.error ?? moveQuote?.error ?? stationQuote?.error ??
     (preview && !canAfford(game, previewCost) ? 'funds' : undefined)
+  const previewSiteError = previewError === 'outOfBounds' || previewError === 'water' || previewError === 'restrictedStationSite'
   const oldDraftLine = draft && lineById.get(draft.id ?? '')
   const ghostId = 'hover-preview'
   let hoverDraft: LineDraft | undefined
@@ -241,11 +241,11 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const plannedStations = draftQuote?.newStations ?? []
   const candidatePosition = draft && hover && !panning && !draft.control && !hoveredStation
     ? roundPoint(hoverDraft?.proposed[ghostId] ?? hover.world) : undefined
-  const candidateOnLand = candidatePosition && (hongKong ? surfaceAt(candidatePosition) === 'land' :
-    candidatePosition.x >= 14 && candidatePosition.x <= city.width - 14 && candidatePosition.y >= 14 &&
-    candidatePosition.y <= city.height - 14 && !isWater(city, candidatePosition, 6))
+  const candidateSiteError = candidatePosition && (stationSiteError(city, candidatePosition) ??
+    (hoverDraft?.proposed[ghostId] && hover ? stationSiteError(city, roundPoint(hover.world)) : undefined))
+  const plannedStationHit = hongKong ? Math.min(13, 11 / scale) : 11 / scale
   let candidateName: string | undefined
-  if (candidatePosition && candidateOnLand && !plannedStations.some((station) => distance(station.position, candidatePosition) * scale < 11)) {
+  if (candidatePosition && !candidateSiteError && !plannedStations.some((station) => distance(station.position, candidatePosition) < plannedStationHit)) {
     const candidate = hoverQuote?.newStations.find((station) => station.id === ghostId)
     candidateName = candidate ? stationLabel(game, candidate, t) : stationNameAt(game, candidatePosition, t, game.stations.concat(plannedStations))
   }
@@ -260,6 +260,39 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
   const chartColor = layerColors[layer]
   const scaleDistance = scale < .32 ? 200 : scale < 0.65 ? 100 : scale > 2 ? 25 : 50
   const stationLabels: { left: number; right: number; top: number; bottom: number }[] = []
+  const candidateAnchor = hover && hover.screen.x < 80 ? 'start' : hover && hover.screen.x > size.width - 80 ? 'end' : 'middle'
+  const draftLabelPoints = draft ? draft.stops.map((id) => draft.proposed[id]).filter(Boolean) : []
+  if (candidateName && candidatePosition) draftLabelPoints.push(candidatePosition)
+
+  function nearestDraftPoint(point: Point) {
+    let nearest: Point | undefined
+    let closest = 22 / scale
+    for (const other of draftLabelPoints) {
+      if (other === point) continue
+      const gap = distance(point, other)
+      if (gap < closest) { nearest = other; closest = gap }
+    }
+    return nearest
+  }
+
+  function draftLabelY(point: Point, name: string, offset: number, anchor = 'middle') {
+    if (!hongKong) return point.y + offset
+    const nearby = nearestDraftPoint(point)
+    const below = markerSize + 17 / scale
+    const above = -markerSize - 9 / scale
+    const preferred = nearby && nearby.y < point.y ? below : offset
+    const width = (name.length * 8 + 12) / scale
+    const left = point.x - (anchor === 'start' ? 0 : anchor === 'end' ? width : width / 2)
+    const right = left + width
+    for (const dy of [preferred, preferred > 0 ? above : below, above - 17 / scale]) {
+      const y = point.y + dy
+      const top = y - 13 / scale, bottom = y + 3 / scale
+      if (stationLabels.some((box) => box.left < right && box.right > left && box.top < bottom && box.bottom > top)) continue
+      stationLabels.push({ left, right, top, bottom })
+      return y
+    }
+    return point.y + preferred
+  }
 
   return <div className={'city-map tool-' + tool + (panning ? ' is-panning' : '')} ref={viewport}>
     {hongKong && <HongKongMap left={left} top={top} scale={scale} width={size.width} height={size.height} flat={flat}/>}
@@ -341,19 +374,21 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
               fill="#fffdf6" stroke={draft.color} strokeWidth="1.7" vectorEffect="non-scaling-stroke"/>)}
           {draft.stops.map((id, index) => {
             const point = draft.proposed[id]
+            if (!point) return null
             const station = plannedStations.find((station) => station.id === id)
-            return point && <g key={id} data-testid="proposed-station" transform={'translate(' + point.x + ' ' + point.y + ')'}>
-              <circle r={markerSize} fill="#fffff8" stroke={draft.color} strokeWidth="2.3" vectorEffect="non-scaling-stroke"/>
-              <text y={0.55 / scale} textAnchor="middle" dominantBaseline="central" fontSize={9.5 / scale}
-                fill={draft.color} className="station-order">{index + 1}</text>
-              <text y={-markerSize - 9 / scale} textAnchor="middle" className="station-name" fontSize={12 / scale}
-                vectorEffect="non-scaling-stroke" data-testid="draft-station-name">
-                {station ? stationLabel(game, station, t) : stationNameAt(game, point, t)}
-              </text>
+            const name = station ? stationLabel(game, station, t) : stationNameAt(game, point, t)
+            const nearby = hongKong ? nearestDraftPoint(point) : undefined
+            const radius = nearby ? clamp((distance(nearby, point) - 2 / scale) / 2, 2 / scale, markerSize) : markerSize
+            return <g key={id} data-testid="proposed-station" transform={'translate(' + point.x + ' ' + point.y + ')'}>
+              <circle r={radius} fill="#fffff8" stroke={draft.color} strokeWidth={radius === markerSize ? '2.3' : '1.6'} vectorEffect="non-scaling-stroke"/>
+              {radius * scale >= 4.8 && <text y={0.55 / scale} textAnchor="middle" dominantBaseline="central" fontSize={9.5 / scale}
+                fill={draft.color} className="station-order">{index + 1}</text>}
+              <text y={draftLabelY(point, name, -markerSize - 9 / scale) - point.y} textAnchor="middle" className="station-name"
+                fontSize={12 / scale} vectorEffect="non-scaling-stroke" data-testid="draft-station-name">{name}</text>
             </g>
           })}
           {hoverDraft?.proposed[ghostId] && <circle cx={hoverDraft.proposed[ghostId].x} cy={hoverDraft.proposed[ghostId].y}
-            r={markerSize} className={hoverQuote && hoverQuote.error && hoverQuote.error !== 'needsStops' ? 'ghost-station invalid' : 'ghost-station'}
+            r={markerSize} className={candidateSiteError || hoverQuote?.error && hoverQuote.error !== 'needsStops' ? 'ghost-station invalid' : 'ghost-station'}
             vectorEffect="non-scaling-stroke" />}
         </g>}
         {trains.map(({ train, line }) =>
@@ -408,8 +443,8 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
         <circle r={markerSize} className={previewError ? 'ghost-station invalid' : 'ghost-station'} vectorEffect="non-scaling-stroke" />
       </g>}
       {hover && candidatePosition && candidateName && <text x={candidatePosition.x}
-        y={candidatePosition.y + (hover.screen.y < 36 ? 27 : -16) / scale}
-        textAnchor={hover.screen.x < 80 ? 'start' : hover.screen.x > size.width - 80 ? 'end' : 'middle'}
+        y={draftLabelY(candidatePosition, candidateName, (hover.screen.y < 36 ? 27 : -16) / scale, candidateAnchor)}
+        textAnchor={candidateAnchor}
         pointerEvents="none" className="station-name" fontSize={12 / scale} vectorEffect="non-scaling-stroke"
         data-testid="draft-station-preview-name">{candidateName}</text>}
     </svg>
@@ -452,11 +487,16 @@ export function CityMap({ game, reach, layer: savedLayer, setLayer, flat, toggle
     {hover && preview && !panning && !insertionPoint && <div className={'map-build-tip' + (previewError ? ' invalid' : '')}
       style={{ left: clamp(hover.screen.x + 20, 8, Math.max(8, size.width - 218)),
         top: clamp(hover.screen.y + 20, 8, Math.max(8, size.height - 126)) }}>
-      <strong>{trackInsertion.length ? t('engineering.insertStation') : stationNameAt(game, previewPoint!, t)}</strong>
+      {!previewSiteError && <strong>{trackInsertion.length ? t('engineering.insertStation') : stationNameAt(game, previewPoint!, t)}</strong>}
       {previewError ? <span>{t('error.' + previewError)}</span> : <>
         <span>{t('station.servedEstimate', { population: number(preview.population, locale), jobs: number(preview.jobs, locale) })}</span>
         <b>{gameMoney(game, previewCost, locale)}</b>
       </>}
+    </div>}
+    {hover && draft?.placingStation && candidateSiteError && <div className="map-build-tip invalid"
+      style={{ left: clamp(hover.screen.x + 20, 8, Math.max(8, size.width - 218)),
+        top: clamp(hover.screen.y + 20, 8, Math.max(8, size.height - 126)) }}>
+      <span>{t('error.' + candidateSiteError)}</span>
     </div>}
     {tool === 'select' && !panning && hover && hoveredStation && layer !== 'engineering' && <div className="map-hover-label"
       style={{ left: clamp(hover.screen.x + 12, 8, Math.max(8, size.width - 155)), top: Math.min(hover.screen.y + 15, size.height - 44) }}>

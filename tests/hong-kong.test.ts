@@ -9,7 +9,7 @@ import { HKD, measurePieces } from '../src/engine/economy.ts'
 import { elevationAt, HONG_KONG, hongKong, hongKongName, surfaceAt, surveyPoint, walkCells } from '../src/engine/hongKong.ts'
 import { activityPopulation, demandDirections, demandPeriod, demandSurface, TCS_WEEKDAY } from '../src/engine/hongKongDemand.ts'
 import { coveredCells, stationPreview } from '../src/engine/network.ts'
-import { quoteLine } from '../src/engine/planning.ts'
+import { quoteInsertion, quoteLine } from '../src/engine/planning.ts'
 import { makeRoutingNetwork, routesFrom } from '../src/engine/routing.ts'
 import { loadGame, saveGame } from '../src/engine/save.ts'
 import { advanceGame, newGame, SAVE_VERSION } from '../src/engine/simulation.ts'
@@ -23,6 +23,9 @@ const tsimShaTsui = { x: 798.4, y: 722.9 }
 const kennedyTown = { x: 303.5, y: 907.4 }
 const kowloonCity = { x: 961.4, y: 376.5 }
 const wongTaiSin = { x: 1003.9, y: 247.8 }
+const hku = { x: 400.5, y: 887.8 }
+const shekTongTsui = { x: 407.3, y: 870.4 }
+const peakGarden = { x: 490.6, y: 1001 }
 
 function act(game: GameState, action: Action) {
   const result = applyAction(game, action)
@@ -50,6 +53,46 @@ test('Hong Kong uses a metre grid, real terrain and shore, and audited footprint
   assert.ok(elevationAt({ x: 490, y: 1120 }) > 210)
   assert.equal(hongKong.map.buildingHeights.surveyed, 45_280)
   assert.ok(hongKong.map.tiles.length > 20)
+})
+
+test('the real HKU station and campus entrance have separate bilingual names from Shek Tong Tsui Market', () => {
+  const hkuName = { en: 'HKU', zh: '香港大學' }
+  const shekTongTsuiName = { en: 'Shek Tong Tsui', zh: '石塘咀' }
+  assert.deepEqual(hongKongName(hku, []), hkuName)
+  assert.deepEqual(hongKongName({ x: 413.2, y: 895.6 }, []), hkuName)
+  assert.deepEqual(hongKongName({ x: 400, y: 907 }, []), hkuName)
+  assert.deepEqual(hongKongName(shekTongTsui, []), shekTongTsuiName)
+  const game = act(fresh(), { type: 'saveLine', design: plan(hku, shekTongTsui) })
+  assert.deepEqual(game.stations.map((station) => station.names), [hkuName, shekTongTsuiName])
+  assert.equal(hongKongName({ x: 413.2, y: 895.6 }, [game.stations[0]]).en, 'HKU South East')
+  assert.deepEqual(hongKongName(shekTongTsui, [game.stations[0]]), shekTongTsuiName)
+})
+
+test('building and moving stations reject sea, inland water and designated parks without changing the game', () => {
+  const game = act(fresh(), { type: 'buildStation', point: central })
+  const before = structuredClone(game)
+  const excluded = [
+    [{ x: 735, y: 819 }, 'water'],                          // Victoria Harbour
+    [{ x: 1020.2, y: 1193.1 }, 'water'],                    // Wong Nai Chung Reservoir
+    [peakGarden, 'restrictedStationSite'],                  // Victoria Peak Garden
+    [{ x: 397.1, y: 933.7 }, 'restrictedStationSite'],      // Lung Fu Shan
+    [{ x: 750.8, y: 1447.6 }, 'restrictedStationSite'],     // Ocean Park
+  ] as const
+  for (const [point, error] of excluded) {
+    assert.equal(stationPreview(city, game, point).error, error)
+    assert.deepEqual(applyAction(game, { type: 'buildStation', point }), { error })
+    assert.deepEqual(applyAction(game, { type: 'moveStation', id: game.stations[0].id, point }), { error })
+    assert.deepEqual(applyAction(game, { type: 'saveLine', design: plan(kennedyTown, point) }), { error })
+  }
+  assert.deepEqual(game, before)
+})
+
+test('underground track can pass under a park while station insertion on that segment is blocked', () => {
+  const game = act(fresh(), { type: 'saveLine', design: plan({ x: 465, y: peakGarden.y }, { x: 525, y: peakGarden.y }) })
+  const lineIds = [game.lines[0].id]
+  assert.deepEqual(quoteInsertion(game, peakGarden, lineIds), { error: 'restrictedStationSite' })
+  assert.deepEqual(applyAction(game, { type: 'insertStation', point: peakGarden, lineIds }), { error: 'restrictedStationSite' })
+  assert.ok(quoteInsertion(game, { x: 516, y: peakGarden.y }, lineIds).station)
 })
 
 test('every population group and employment district conserves its official control total', () => {
@@ -96,7 +139,7 @@ test('survey alignments can be built empty, gain stops, lose stops and retain me
   assert.equal(game.funds, HKD.initial - quote.cost)
   assert.equal(game.stations.length, 0)
   assert.equal(applyAction(game, { type: 'buyTrain', id }).error, 'needsStops')
-  for (const share of [.23, .81]) game = act(game, { type: 'insertStation', point: pointOnTrack(pieces, length * share)!, lineIds: [id] })
+  for (const share of [.18, .81]) game = act(game, { type: 'insertStation', point: pointOnTrack(pieces, length * share)!, lineIds: [id] })
   assert.equal(game.lines[0].stops.length, 2)
   assert.ok(Math.abs(allTrack(game.lines[0]).reduce((sum, section) => sum + trackLength(section.pieces), 0) - length) < .001)
   game = act(game, { type: 'removeStation', id: game.lines[0].stops[0] })

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-28
+
+- Distinguished HKU and Shek Tong Tsui in station suggestions and planned labels using the local MTR station, campus exits and market as geographic references.
+- Required new, inserted and relocated stations to be outside water, parks, scenic sites and protected areas in Hong Kong.
+
 ## 2.0.0 — 2026-11-27
 
 - Set new games in Hong Kong Island and Kowloon with a real coastline, terrain, buildings, streets and bilingual names. Added zoom-dependent city rendering and geographic layer attribution.

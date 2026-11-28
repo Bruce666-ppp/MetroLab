@@ -5,10 +5,11 @@ import type { EngineeringError } from './economy.ts'
 import { distance } from './geometry.ts'
 import { hongKongName } from './hongKong.ts'
 import { DWELL, pairsOf, stationPreview, TRAIN_SPEED } from './network.ts'
+import type { StationSiteError } from './network.ts'
 import { curveSpeedKmh, ENGINEERING, pieceLength, radiusStatus, trackLength, trackProfile } from './track.ts'
 import type { City, GameState, Line, LineDesign, Point, Station, TrackMethod } from './types.ts'
 
-export type PlanningError = 'outOfBounds' | 'water' | 'tooClose' | 'invalidStops' | 'needsStops' |
+export type PlanningError = StationSiteError | 'tooClose' | 'invalidStops' | 'needsStops' |
   'invalidColor' | 'curve' | 'controlPoint' | 'noTrack' | 'differentTrack' | 'funds' | 'invalidMethod' | 'openLoop' | EngineeringError
 
 export const maxNameLength = 36

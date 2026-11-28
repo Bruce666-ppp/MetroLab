@@ -60,6 +60,14 @@ ROADS = {
     'track': 3, 'path': 3, 'footway': 3, 'steps': 3, 'cycleway': 3,
 }
 RESIDENTIAL, OFFICE, SHOP, INDUSTRY, SCHOOL, HEALTH, OTHER = range(7)
+STATION_REFERENCES = {
+    6135479158: 16,  # HKU station
+    2555184303: 20,  # Exit A2, Hong Kong University
+    2555184306: 12,  # Exit C1, Pok Fu Lam Road
+    289340908: 18,  # Shek Tong Tsui neighbourhood
+}
+# FEHD facility 519, Shek Tong Tsui Market, 470 Queen's Road West.
+SHEK_TONG_TSUI_MARKET = (114.136164, 22.285552)
 
 
 def fetch(directory, name, url):
@@ -169,11 +177,23 @@ def label_kind(tags):
         return 'street'
 
 
+def station_exclusion(tags):
+    if (tags.get('natural') == 'water' or tags.get('waterway') == 'riverbank' or tags.get('landuse') == 'reservoir') and (
+        tags.get('covered') != 'yes' and tags.get('location') != 'underground' and tags.get('tunnel') in (None, 'no')
+    ):
+        return 'water'
+    if (tags.get('boundary') in ('protected_area', 'national_park') or
+        tags.get('leisure') in ('park', 'garden', 'nature_reserve') or tags.get('tourism') in ('theme_park', 'zoo')):
+        return 'restricted'
+
+
 class OpenMap(osmium.SimpleHandler):
     def __init__(self):
         super().__init__()
         self.coast, self.roads, self.walkways, self.parks, self.uses = [], [], [], [], []
         self.names, self.piers = [], []
+        self.station_exclusions = {'water': [], 'restricted': []}
+        self.station_references = {}
 
     def add_name(self, tags, xy, kind=None):
         kind = kind or label_kind(tags)
@@ -185,6 +205,8 @@ class OpenMap(osmium.SimpleHandler):
 
     def node(self, node):
         tags = dict(node.tags)
+        if node.id in STATION_REFERENCES:
+            self.station_references[node.id] = [*point(*PROJECT(node.location.lon, node.location.lat)), STATION_REFERENCES[node.id]]
         if tags.get('name') and label_kind(tags) or tags.get('amenity') == 'ferry_terminal':
             self.add_name(tags, PROJECT(node.location.lon, node.location.lat))
 
@@ -221,7 +243,8 @@ class OpenMap(osmium.SimpleHandler):
         landuse = use(tags)
         green = tags.get('leisure') in ('park', 'garden', 'nature_reserve', 'recreation_ground', 'pitch') or tags.get('boundary') in ('protected_area', 'national_park') or tags.get('natural') in ('wood', 'scrub', 'grassland') or tags.get('landuse') in ('forest', 'grass', 'recreation_ground', 'cemetery')
         kind = label_kind(tags)
-        if landuse is None and not green and not kind:
+        exclusion = station_exclusion(tags)
+        if landuse is None and not green and not kind and not exclusion:
             return
         for outer in area.outer_rings():
             coordinates = [(node.lon, node.lat) for node in outer if node.location.valid()]
@@ -237,7 +260,23 @@ class OpenMap(osmium.SimpleHandler):
                 self.uses.append((polygon, landuse))
             if green:
                 self.parks.append((polygon, 1 if tags.get('leisure') in ('park', 'garden', 'pitch') else 0))
-            self.add_name(tags, polygon.representative_point().coords[0], kind)
+            if kind or landuse is not None or green:
+                self.add_name(tags, polygon.representative_point().coords[0], kind)
+            if exclusion:
+                self.station_exclusions[exclusion].append(polygon)
+
+
+def write_station_sites(output, osm):
+    sites = {}
+    for kind, areas in osm.station_exclusions.items():
+        boundaries = unary_union(areas).simplify(2, preserve_topology=True)
+        sites[kind] = [rings(poly) for poly in sorted(parts(boundaries, 'Polygon'), key=lambda poly: poly.bounds)]
+    refs = osm.station_references
+    sites['names'] = [
+        ('HKU', '香港大學', [refs[6135479158], refs[2555184303], refs[2555184306]]),
+        ('Shek Tong Tsui', '石塘咀', [[*point(*PROJECT(*SHEK_TONG_TSUI_MARKET)), 23], refs[289340908]]),
+    ]
+    write_json(output / 'station-sites.json', sites)
 
 
 def coastline(osm, councils):
@@ -610,6 +649,7 @@ def build(cache, output):
     pbf = cache / 'hong-kong-260101.osm.pbf'
     print('Read OpenStreetMap snapshot', flush=True)
     osm.apply_file(pbf, locations=True, idx='flex_mem')
+    write_station_sites(output, osm)
     full_land, land, island = coastline(osm, councils)
     expanded_land = land.buffer(40)
     prepare(expanded_land)
@@ -638,5 +678,14 @@ def build(cache, output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cache', type=Path, required=True, help='Directory for unmodified source downloads')
+    parser.add_argument('--station-sites-only', action='store_true', help='Build only the station naming and exclusion layer')
     args = parser.parse_args()
-    build(args.cache, ROOT / 'public/data/hong-kong')
+    destination = ROOT / 'public/data/hong-kong'
+    if args.station_sites_only:
+        args.cache.mkdir(parents=True, exist_ok=True)
+        filename = 'hong-kong-260101.osm.pbf'
+        osm = OpenMap()
+        osm.apply_file(fetch(args.cache, filename, SOURCES[filename]), locations=True, idx='flex_mem')
+        write_station_sites(destination, osm)
+    else:
+        build(args.cache, destination)

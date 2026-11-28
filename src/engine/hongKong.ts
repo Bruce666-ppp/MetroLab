@@ -21,8 +21,14 @@ interface RawMap {
   buildingHeights: { surveyed: number; storeys: number; estimated: number }
 }
 
-async function loadMap(): Promise<RawMap> {
-  const asset = 'data/hong-kong/model.json'
+interface StationSites {
+  water: Polygon[]
+  restricted: Polygon[]
+  names: [en: string, zh: string, anchors: [x: number, y: number, reach: number][]][]
+}
+
+async function loadGeography<T>(file: string): Promise<T> {
+  const asset = 'data/hong-kong/' + file
   if (typeof location !== 'undefined') {
     const response = await fetch(import.meta.env.BASE_URL + asset)
     if (!response.ok) throw new Error('Hong Kong geography could not be loaded (' + response.status + ')')
@@ -33,7 +39,7 @@ async function loadMap(): Promise<RawMap> {
   return JSON.parse(await readFile(new URL('../../public/' + asset, import.meta.url), 'utf8'))
 }
 
-const map = await loadMap()
+const [map, stationSites] = await Promise.all([loadGeography<RawMap>('model.json'), loadGeography<StationSites>('station-sites.json')])
 const coordinate = ([x, y]: number[]): Point => ({ x, y })
 const gap = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
 const zones = map.zones.map(([id, x, y, en, zh, residents, jobs, students, shops, health, leisure, areaKm2, shape]) => ({
@@ -84,6 +90,26 @@ const inPolygon = (polygon: Polygon, point: Point) => contains(polygon[0], point
 const inSet = (polygons: Polygon[], point: Point) => polygons.some((polygon) => inPolygon(polygon, point))
 const cellKey = (x: number, y: number) => x + ',' + y
 
+function indexPolygons(polygons: Polygon[], step: number) {
+  const index = new Map<string, Polygon[]>()
+  for (const polygon of polygons) {
+    const outer = polygon[0]
+    const xs = outer.filter((_, i) => i % 2 === 0)
+    const ys = outer.filter((_, i) => i % 2 === 1)
+    const minX = Math.floor(Math.min(...xs) / step), maxX = Math.floor(Math.max(...xs) / step)
+    const minY = Math.floor(Math.min(...ys) / step), maxY = Math.floor(Math.max(...ys) / step)
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        const key = cellKey(x, y)
+        const bucket = index.get(key) ?? []
+        bucket.push(polygon)
+        index.set(key, bucket)
+      }
+    }
+  }
+  return (point: Point) => inSet(index.get(cellKey(Math.floor(point.x / step), Math.floor(point.y / step))) ?? [], point)
+}
+
 function indexPoints<T extends Point>(points: T[], step: number) {
   const index = new Map<string, T[]>()
   for (const item of points) {
@@ -118,16 +144,28 @@ for (const zone of zones) for (const polygon of zone.shape) {
   }
 }
 
+const inMap = (point: Point) => Number.isFinite(point.x) && Number.isFinite(point.y) &&
+  point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height
+const mapSurface = (point: Point) => inSet(map.land, point) ? 'land' : inSet(map.fullLand, point) ? 'outside' : 'water'
 const shoreGrid = new Map<string, 'land' | 'water' | 'outside'>()
 export function surfaceAt(point: Point) {
-  if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.y < 0 || point.x > width || point.y > height) return 'outside'
+  if (!inMap(point)) return 'outside'
   const key = cellKey(Math.round(point.x * 2), Math.round(point.y * 2))
   const known = shoreGrid.get(key)
   if (known) return known
-  const result = inSet(map.land, point) ? 'land' : inSet(map.fullLand, point) ? 'outside' : 'water'
+  const result = mapSurface(point)
   if (shoreGrid.size > 80_000) shoreGrid.clear()
   shoreGrid.set(key, result)
   return result
+}
+
+const inInlandWater = indexPolygons(stationSites.water, 60)
+const inRestrictedArea = indexPolygons(stationSites.restricted, 60)
+export function hongKongStationSiteError(point: Point) {
+  const surface = inMap(point) ? mapSurface(point) : 'outside'
+  if (surface === 'outside') return 'outOfBounds'
+  if (surface === 'water' || inInlandWater(point)) return 'water'
+  if (inRestrictedArea(point)) return 'restrictedStationSite'
 }
 
 export function zoneAt(point: Point) {
@@ -141,21 +179,32 @@ const reachByKind = [85, 63, 29, 32, 23, 24]
 const nameKey = (name: string) => name.trim().toLowerCase()
 const directions: BilingualName[] = [{ en: 'East', zh: '東' }, { en: 'South East', zh: '東南' }, { en: 'South', zh: '南' }, { en: 'South West', zh: '西南' },
   { en: 'West', zh: '西' }, { en: 'North West', zh: '西北' }, { en: 'North', zh: '北' }, { en: 'North East', zh: '東北' }]
+const stationReferences = stationSites.names.flatMap(([en, zh, anchors]) => {
+  const origin = coordinate(anchors[0])
+  return anchors.map(([x, y, reach]) => ({ en, zh, x, y, reach, origin }))
+})
 
 export function hongKongName(point: Point, previous: Station[]): BilingualName {
-  const local = placeIndex(point, 135).map((place) => ({ place, distance: gap(place, point) }))
+  let reference: typeof stationReferences[number] | undefined
+  let nearest = Infinity
+  for (const anchor of stationReferences) {
+    const distance = gap(anchor, point)
+    if (distance <= anchor.reach && distance < nearest) { reference = anchor; nearest = distance }
+  }
+  const local = reference ? [] : placeIndex(point, 135).map((place) => ({ place, distance: gap(place, point) }))
     .filter(({ place, distance }) => distance <= reachByKind[place.kind] * 1.25)
     .sort((a, b) => (a.distance / reachByKind[a.place.kind]) ** 2 - (b.distance / reachByKind[b.place.kind]) ** 2
       + 0.42 * (kinds[b.place.kind] - kinds[a.place.kind]) + 0.05 * (a.place.source - b.place.source))
   const busy = new Set(previous.flatMap((station) => [station.names?.en ?? station.name, station.names?.zh ?? station.name]).map(nameKey))
   const unique = (name: BilingualName) => !busy.has(nameKey(name.en)) && !busy.has(nameKey(name.zh))
-  const best = local[0]?.place
+  const best = reference ?? local[0]?.place
   if (best && unique(best)) return { en: best.en, zh: best.zh }
   const alternate = best && local.find(({ place, distance }) => place.kind < 4 && distance < 43 && unique(place))?.place
   if (alternate) return { en: alternate.en, zh: alternate.zh }
   const area = zoneAt(point) ?? zones.reduce((best, zone) => gap(zone.center, point) < gap(best.center, point) ? zone : best)
   const name = best ?? { ...area.names, ...area.center }
-  const angle = Math.atan2(point.y - name.y, point.x - name.x)
+  const origin = reference?.origin ?? name
+  const angle = Math.atan2(point.y - origin.y, point.x - origin.x)
   const index = (Math.round(angle / (Math.PI / 4)) + 8) % 8
   for (const offset of [0, 1, -1, 2, -2, 3, -3, 4]) {
     const direction = directions[(index + offset + 8) % 8]
